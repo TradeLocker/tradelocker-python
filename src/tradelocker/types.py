@@ -53,7 +53,7 @@ ConfigType: TA = (
 
 ResolutionType: TA = Literal["1M", "1W", "1D", "4H", "1H", "30m", "15m", "5m", "1m"]
 ModificationParamsType: TA = dict[
-    str, str | StopLossType | TakeProfitType | ValidityType
+    str, str | float | StopLossType | TakeProfitType | ValidityType
 ]
 LocaleType: TA = Literal[
     "ar", "en", "es", "fr", "ja", "ko", "pl", "pt", "ru", "tr", "ua", "zh_sm", "zh_tr"
