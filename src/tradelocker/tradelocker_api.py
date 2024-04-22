@@ -32,6 +32,8 @@ from .types import (
     MarketDepthlistType,
     ModificationParamsType,
     OrderTypeType,
+    StopLossType,
+    TakeProfitType,
     RequestsMappingType,
     ResolutionType,
     RouteType,
@@ -1079,6 +1081,23 @@ class TLAPI:
         )
         current_ap: float = get_nested_key(current_quotes, ["ap"], float)
         return current_ap
+    
+    @log_func
+    @tl_typechecked
+    def get_latest_bid_price(self, instrument_id: int) -> float:
+        """Returns latest price informations for requested instrument.
+
+        Args:
+            instrument_id (int): Instrument Id
+
+        Returns:
+            float: Latest price of the instrument
+        """
+        current_quotes: dict[str, float] = cast(
+            dict[str, float], self.get_quotes(instrument_id)
+        )
+        current_bp: float = get_nested_key(current_quotes, ["bp"], float)
+        return current_bp
 
     @log_func
     @tl_typechecked
@@ -1171,6 +1190,11 @@ class TLAPI:
         validity: Optional[ValidityType] = None,
         position_netting: bool = False,
         position_id: int = 0,
+        take_profit: Optional[float] = 0,
+        take_profit_type: Optional[TakeProfitType] = None,
+        stop_loss: Optional[float] = 0,
+        stop_loss_type: Optional[StopLossType] = None,
+        stop_price: Optional[float] = None
     ) -> int | str:
         """Creates an order.
 
@@ -1203,7 +1227,12 @@ class TLAPI:
             else:
                 validity = "IOC"
 
-        if type_ == "limit":
+        if type_ == "limit" or type_=="stop":
+            if (type == "stop") and stop_price == None:
+                stop_price = price
+                price = 0
+                self.log.warning(f"Order of {type_ = } specified, but no stop_price set. Using price as stop price")
+
             if type_ in ["limit", "stop"] and validity and validity != "GTC":
                 error_msg = (
                     f"{type_} orders must use GTC as validity. Not placing the order."
@@ -1238,8 +1267,10 @@ class TLAPI:
             )
             return ""
 
-        request_body: dict[str, str] = {
-            "price": str(price),
+
+        request_body = {
+            "price": price,
+            "stopPrice": stop_price,
             "qty": str(quantity),
             "routeId": self._get_trade_route_id(instrument_id),
             "side": side,
@@ -1247,6 +1278,25 @@ class TLAPI:
             "tradableInstrumentId": str(instrument_id),
             "type": type_,
         }
+
+        if take_profit:
+            if not take_profit_type:
+                self.log.warning(
+                    "Unable to place an order with a take profit without a take_profit_type"
+                )
+                return ""
+            request_body["takeProfit"] = take_profit
+            request_body["takeProfitType"] = take_profit_type
+
+        if stop_loss:
+            if not stop_loss_type:
+                self.log.warning(
+                    "Unable to place an order with a stop_loss without a stop_loss_type"
+                )
+                return ""
+            request_body["stopLoss"] = stop_loss,
+            request_body["stopLossType"] = stop_loss_type,
+            
 
         if position_id != 0:
             request_body["positionId"] = position_id
@@ -1275,6 +1325,7 @@ class TLAPI:
             json=request_body,
             timeout=_TIMEOUT,
         )
+        print(response)
         response_json = self._get_response_json(response)
         try:
             order_id: int = int(get_nested_key(response_json, ["d", "orderId"], str))
@@ -1338,6 +1389,58 @@ class TLAPI:
             timeout=_TIMEOUT,
         )
         response_json = self._get_response_json(response)
-        self.log.info(f"Order modification response: {response_json}")
+        self.log.debug(f"Order modification response: {response_json}")
         response_status: str = get_nested_key(response_json, ["s"], str)
         return response_status == "ok"
+    
+    @log_func
+    @tl_typechecked
+    def modify_position(
+        self, position_id: int, modification_params: ModificationParamsType
+    ) -> bool:
+        """Modifies an open position.
+
+        Args:
+            position_id (int): Position Id
+            modification_params (_ModificationParamsType): Position modification details
+
+        Returns:
+            bool: True on success, False on error
+        """
+        route_url = f"{self._base_url}/trade/positions/{position_id}"
+
+        self.log.info(f"Modifying the position with id {position_id}")
+
+        response = requests.patch(
+            url=route_url,
+            headers=self._get_headers({"Content-type": "application/json"}),
+            json=modification_params,
+            timeout=_TIMEOUT,
+        )
+        response_json = self._get_response_json(response)
+        self.log.debug(f"Position modification response: {response_json}")
+        response_status: str = get_nested_key(response_json, ["s"], str)
+        return response_status == "ok"
+    
+    @log_func
+    @tl_typechecked
+    # This still needs to be tested.
+    def get_execution_id_by_order_id(self, order_id: int):
+        """Retrieves execution id from the order id.
+
+        Args:
+            order_id (int): An order id
+
+        Returns:
+            int: Execution id or None
+        """ 
+        self.log.info(f"Getting execution id from orders history")
+        orders_history = self.get_all_orders(history=True)
+        for execution in orders_history['d']['ordersHistory']:
+            if str(order_id) in execution:
+                execution_order_id = int(execution[16])
+                return execution_order_id
+            
+        return None
+        
+        
