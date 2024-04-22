@@ -32,6 +32,8 @@ from .types import (
     MarketDepthlistType,
     ModificationParamsType,
     OrderTypeType,
+    StopLossType,
+    TakeProfitType,
     RequestsMappingType,
     ResolutionType,
     RouteType,
@@ -1079,6 +1081,25 @@ class TLAPI:
         )
         current_ap: float = get_nested_key(current_quotes, ["ap"], float)
         return current_ap
+    
+    @log_func
+    @tl_typechecked
+    # TODO: should be replaced with "get_latest_asking_price"
+    def get_latest_bid_price(self, instrument_id: int) -> float:
+        """Returns latest price informations for requested instrument.
+
+        Args:
+            instrument_id (int): Instrument Id
+
+        Returns:
+            float: Latest price of the instrument
+        """
+        current_quotes: dict[str, float] = cast(
+            dict[str, float], self.get_quotes(instrument_id)
+        )
+        print(current_quotes)
+        current_bp: float = get_nested_key(current_quotes, ["bp"], float)
+        return current_bp
 
     @log_func
     @tl_typechecked
@@ -1171,6 +1192,10 @@ class TLAPI:
         validity: Optional[ValidityType] = None,
         position_netting: bool = False,
         position_id: int = 0,
+        take_profit: float = 0,
+        take_profit_type: TakeProfitType = 'absolute',
+        stop_loss: float = 0,
+        stop_loss_type: StopLossType = 'absolute'
     ) -> int | str:
         """Creates an order.
 
@@ -1203,7 +1228,9 @@ class TLAPI:
             else:
                 validity = "IOC"
 
-        if type_ == "limit":
+        if type_ == "limit" or type_=="stop":
+            stopPrice = price
+            price = 0
             if type_ in ["limit", "stop"] and validity and validity != "GTC":
                 error_msg = (
                     f"{type_} orders must use GTC as validity. Not placing the order."
@@ -1238,15 +1265,22 @@ class TLAPI:
             )
             return ""
 
-        request_body: dict[str, str] = {
-            "price": str(price),
+
+        request_body = {
+            "price": float(price),
+            "stopPrice": stopPrice,
             "qty": str(quantity),
             "routeId": self._get_trade_route_id(instrument_id),
             "side": side,
             "validity": validity,
             "tradableInstrumentId": str(instrument_id),
             "type": type_,
+            "stopLoss": stop_loss,
+            "stopLossType": stop_loss_type,
+            "takeProfit": take_profit,
+            "takeProfitType": take_profit_type,
         }
+        print(request_body)
 
         if position_id != 0:
             request_body["positionId"] = position_id
@@ -1341,3 +1375,156 @@ class TLAPI:
         self.log.info(f"Order modification response: {response_json}")
         response_status: str = get_nested_key(response_json, ["s"], str)
         return response_status == "ok"
+    
+    @log_func
+    @tl_typechecked
+    # TODO: this should probably be further expanded / validated
+    def modify_position(
+        self, order_id: int, modification_params: ModificationParamsType
+    ) -> bool:
+        """Modifies a open position.
+
+        Args:
+            order_id (int): Order Id
+            modification_params (_ModificationParamsType): Order modification details
+
+        Returns:
+            bool: True on success, False on error
+        """
+        print('AccessToken: ', self.get_access_token())
+        route_url = f"{self._base_url}/trade/positions/{order_id}"
+
+        self.log.info(f"Modifying the order with id {order_id}")
+
+        response = requests.patch(
+            url=route_url,
+            headers=self._get_headers({"Content-type": "application/json"}),
+            json=modification_params,
+            timeout=_TIMEOUT,
+        )
+        response_json = self._get_response_json(response)
+        self.log.info(f"Order modification response: {response_json}")
+        response_status: str = get_nested_key(response_json, ["s"], str)
+        return response_status == "ok"
+
+
+    @log_func
+    @tl_typechecked
+    # TODO: this should probably be further expanded / validated
+    def get_orders(self) -> bool:
+        """Modifies a open position.
+
+        Args:
+            order_id (int): Order Id
+            modification_params (_ModificationParamsType): Order modification details
+
+        Returns:
+            bool: True on success, False on error
+        """
+        print('AccessToken: ', self.get_access_token())
+        route_url = f"{self._base_url}/trade/accounts/{self.account_id}/orders"
+
+        self.log.info(f"Getting Orders")
+
+        response = requests.get(
+            url=route_url,
+            headers=self._get_headers({"Content-type": "application/json"}),
+            timeout=_TIMEOUT,
+        )
+        response_json = self._get_response_json(response)
+        self.log.info(f"Order modification response: {response_json}")
+        response_status: str = get_nested_key(response_json, ["s"], str)
+        return response_status == "ok"
+    
+    @log_func
+    @tl_typechecked
+    # TODO: this should probably be further expanded / validated
+    def get_positions(self) -> bool:
+        """Modifies a open position.
+
+        Args:
+            order_id (int): Order Id
+            modification_params (_ModificationParamsType): Order modification details
+
+        Returns:
+            bool: True on success, False on error
+        """
+        print('AccessToken: ', self.get_access_token())
+        route_url = f"{self._base_url}/trade/accounts/{self.account_id}/positions"
+
+        self.log.info(f"Getting positions")
+
+        response = requests.get(
+            url=route_url,
+            headers=self._get_headers({"Content-type": "application/json"}),
+            timeout=_TIMEOUT,
+        )
+        response_json = self._get_response_json(response)
+        self.log.info(f"Position modification response: {response_json}")
+        response_status: str = get_nested_key(response_json, ["s"], str)
+        return response_status == "ok"
+    
+    @log_func
+    @tl_typechecked
+    # TODO: this should probably be further expanded / validated
+    def get_executions(self) -> bool:
+        """Retrieves executions.
+
+        Returns:
+            bool: True on success, False on error
+        """
+        route_url = f"{self._base_url}/trade/accounts/{self.account_id}/executions"
+
+        # self.log.info(f"Getting executions")
+
+        response = requests.get(
+            url=route_url,
+            headers=self._get_headers({"Content-type": "application/json"}),
+            timeout=_TIMEOUT,
+        )
+        response_json = self._get_response_json(response)
+        self.log.info(f"Executions response: {response_json}")
+        response_status: str = get_nested_key(response_json, ["s"], str)
+        return response_status == "ok"
+    
+    @log_func
+    @tl_typechecked
+    def get_orders_history(self):
+        """Retrieves orders history.
+        Returns:
+            Object: Object of orders
+        """ 
+        route_url = f"{self._base_url}/trade/accounts/{self.account_id}/ordersHistory"
+
+        self.log.info(f"Getting orders history")
+
+        response = requests.get(
+            url=route_url,
+            headers=self._get_headers({"Content-type": "application/json"}),
+            timeout=_TIMEOUT,
+        )
+        response_json = self._get_response_json(response)
+        self.log.info(f"Executions response: {response_json}")
+        return response_json
+    
+    @log_func
+    @tl_typechecked
+    def get_execution_id_by_order_id(self, order_id: int):
+        """Retrieves execution id from the order id.
+
+        Args:
+            order_id (int): An order id
+
+        Returns:
+            int: Execution id or None
+        """ 
+        self.log.info(f"Getting execution id from orders history")
+        orders_history = self.get_orders_history()
+        for execution in orders_history['d']['ordersHistory']:
+            if str(order_id) in execution:
+                execution_order_id = int(execution[16])
+                return execution_order_id
+            
+        return None
+        
+        
