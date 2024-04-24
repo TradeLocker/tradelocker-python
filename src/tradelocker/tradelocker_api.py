@@ -1378,7 +1378,6 @@ class TLAPI:
     
     @log_func
     @tl_typechecked
-    # TODO: this should probably be further expanded / validated
     def modify_position(
         self, position_id: int, modification_params: ModificationParamsType
     ) -> bool:
@@ -1408,76 +1407,7 @@ class TLAPI:
     
     @log_func
     @tl_typechecked
-    # TODO: this should probably be further expanded / validated
-    def get_positions(self) -> bool:
-        """Modifies a open position.
-
-        Args:
-            order_id (int): Order Id
-            modification_params (_ModificationParamsType): Order modification details
-
-        Returns:
-            bool: True on success, False on error
-        """
-        route_url = f"{self._base_url}/trade/accounts/{self.account_id}/positions"
-
-        self.log.info(f"Getting positions")
-
-        response = requests.get(
-            url=route_url,
-            headers=self._get_headers({"Content-type": "application/json"}),
-            timeout=_TIMEOUT,
-        )
-        response_json = self._get_response_json(response)
-        self.log.info(f"Position modification response: {response_json}")
-        response_status: str = get_nested_key(response_json, ["s"], str)
-        return response_status == "ok"
-    
-    @log_func
-    @tl_typechecked
-    # TODO: this should probably be further expanded / validated
-    def get_executions(self) -> bool:
-        """Retrieves executions.
-
-        Returns:
-            bool: True on success, False on error
-        """
-        route_url = f"{self._base_url}/trade/accounts/{self.account_id}/executions"
-
-        # self.log.info(f"Getting executions")
-
-        response = requests.get(
-            url=route_url,
-            headers=self._get_headers({"Content-type": "application/json"}),
-            timeout=_TIMEOUT,
-        )
-        response_json = self._get_response_json(response)
-        self.log.info(f"Executions response: {response_json}")
-        response_status: str = get_nested_key(response_json, ["s"], str)
-        return response_status == "ok"
-    
-    @log_func
-    @tl_typechecked
-    def get_orders_history(self):
-        """Retrieves orders history.
-        Returns:
-            Object: Object of orders
-        """ 
-        route_url = f"{self._base_url}/trade/accounts/{self.account_id}/ordersHistory"
-
-        self.log.info(f"Getting orders history")
-
-        response = requests.get(
-            url=route_url,
-            headers=self._get_headers({"Content-type": "application/json"}),
-            timeout=_TIMEOUT,
-        )
-        response_json = self._get_response_json(response)
-        self.log.info(f"Executions response: {response_json}")
-        return response_json
-    
-    @log_func
-    @tl_typechecked
+    # This still needs to be tested.
     def get_execution_id_by_order_id(self, order_id: int):
         """Retrieves execution id from the order id.
 
@@ -1488,7 +1418,7 @@ class TLAPI:
             int: Execution id or None
         """ 
         self.log.info(f"Getting execution id from orders history")
-        orders_history = self.get_orders_history()
+        orders_history = self.get_all_orders(history=True)
         for execution in orders_history['d']['ordersHistory']:
             if str(order_id) in execution:
                 execution_order_id = int(execution[16])
