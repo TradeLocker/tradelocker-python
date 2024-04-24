@@ -1380,53 +1380,25 @@ class TLAPI:
     @tl_typechecked
     # TODO: this should probably be further expanded / validated
     def modify_position(
-        self, order_id: int, modification_params: ModificationParamsType
+        self, position_id: int, modification_params: ModificationParamsType
     ) -> bool:
-        """Modifies a open position.
+        """Modifies an open position.
 
         Args:
-            order_id (int): Order Id
-            modification_params (_ModificationParamsType): Order modification details
+            position_id (int): Position Id
+            modification_params (_ModificationParamsType): Position modification details
 
         Returns:
             bool: True on success, False on error
         """
-        route_url = f"{self._base_url}/trade/positions/{order_id}"
+        route_url = f"{self._base_url}/trade/positions/{position_id}"
 
-        self.log.info(f"Modifying the order with id {order_id}")
+        self.log.info(f"Modifying the position with id {position_id}")
 
         response = requests.patch(
             url=route_url,
             headers=self._get_headers({"Content-type": "application/json"}),
             json=modification_params,
-            timeout=_TIMEOUT,
-        )
-        response_json = self._get_response_json(response)
-        self.log.info(f"Order modification response: {response_json}")
-        response_status: str = get_nested_key(response_json, ["s"], str)
-        return response_status == "ok"
-
-
-    @log_func
-    @tl_typechecked
-    # TODO: this should probably be further expanded / validated
-    def get_orders(self) -> bool:
-        """Modifies a open position.
-
-        Args:
-            order_id (int): Order Id
-            modification_params (_ModificationParamsType): Order modification details
-
-        Returns:
-            bool: True on success, False on error
-        """
-        route_url = f"{self._base_url}/trade/accounts/{self.account_id}/orders"
-
-        self.log.info(f"Getting Orders")
-
-        response = requests.get(
-            url=route_url,
-            headers=self._get_headers({"Content-type": "application/json"}),
             timeout=_TIMEOUT,
         )
         response_json = self._get_response_json(response)
