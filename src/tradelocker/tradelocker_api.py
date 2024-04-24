@@ -1084,7 +1084,6 @@ class TLAPI:
     
     @log_func
     @tl_typechecked
-    # TODO: should be replaced with "get_latest_asking_price"
     def get_latest_bid_price(self, instrument_id: int) -> float:
         """Returns latest price informations for requested instrument.
 
