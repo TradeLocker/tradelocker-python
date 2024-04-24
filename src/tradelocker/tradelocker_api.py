@@ -1096,7 +1096,6 @@ class TLAPI:
         current_quotes: dict[str, float] = cast(
             dict[str, float], self.get_quotes(instrument_id)
         )
-        print(current_quotes)
         current_bp: float = get_nested_key(current_quotes, ["bp"], float)
         return current_bp
 
