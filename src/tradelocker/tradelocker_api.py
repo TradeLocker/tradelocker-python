@@ -1372,7 +1372,7 @@ class TLAPI:
             timeout=_TIMEOUT,
         )
         response_json = self._get_response_json(response)
-        self.log.info(f"Order modification response: {response_json}")
+        self.log.debug(f"Order modification response: {response_json}")
         response_status: str = get_nested_key(response_json, ["s"], str)
         return response_status == "ok"
     
@@ -1402,7 +1402,7 @@ class TLAPI:
             timeout=_TIMEOUT,
         )
         response_json = self._get_response_json(response)
-        self.log.info(f"Order modification response: {response_json}")
+        self.log.debug(f"Position modification response: {response_json}")
         response_status: str = get_nested_key(response_json, ["s"], str)
         return response_status == "ok"
     
