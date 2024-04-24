@@ -1227,8 +1227,11 @@ class TLAPI:
                 validity = "IOC"
 
         if type_ == "limit" or type_=="stop":
-            stopPrice = price
-            price = 0
+            if (type == "stop") and stop_price == None:
+                stop_price = price
+                price = 0
+                self.log.warning(f"Order of {type_ = } specified, but no stop_price set. Using price as stop price")
+
             if type_ in ["limit", "stop"] and validity and validity != "GTC":
                 error_msg = (
                     f"{type_} orders must use GTC as validity. Not placing the order."
@@ -1266,7 +1269,7 @@ class TLAPI:
 
         request_body = {
             "price": float(price),
-            "stopPrice": stopPrice,
+            "stopPrice": stop_price,
             "qty": str(quantity),
             "routeId": self._get_trade_route_id(instrument_id),
             "side": side,
