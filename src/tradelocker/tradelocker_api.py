@@ -1281,7 +1281,6 @@ class TLAPI:
             "takeProfit": take_profit,
             "takeProfitType": take_profit_type,
         }
-        print(request_body)
 
         if position_id != 0:
             request_body["positionId"] = position_id
@@ -1392,7 +1391,6 @@ class TLAPI:
         Returns:
             bool: True on success, False on error
         """
-        print('AccessToken: ', self.get_access_token())
         route_url = f"{self._base_url}/trade/positions/{order_id}"
 
         self.log.info(f"Modifying the order with id {order_id}")
@@ -1422,7 +1420,6 @@ class TLAPI:
         Returns:
             bool: True on success, False on error
         """
-        print('AccessToken: ', self.get_access_token())
         route_url = f"{self._base_url}/trade/accounts/{self.account_id}/orders"
 
         self.log.info(f"Getting Orders")
@@ -1450,7 +1447,6 @@ class TLAPI:
         Returns:
             bool: True on success, False on error
         """
-        print('AccessToken: ', self.get_access_token())
         route_url = f"{self._base_url}/trade/accounts/{self.account_id}/positions"
 
         self.log.info(f"Getting positions")
