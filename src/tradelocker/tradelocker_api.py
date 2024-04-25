@@ -1171,6 +1171,8 @@ class TLAPI:
         validity: Optional[ValidityType] = None,
         position_netting: bool = False,
         position_id: int = 0,
+        sl: Optional[float] = None,
+        tp: Optional[float] = None,
     ) -> int | str:
         """Creates an order.
 
@@ -1183,6 +1185,8 @@ class TLAPI:
             validity (_ValidityType, optional): Validity type of order. Defaults to "IOC".
             position_netting (bool, optional): Should position netting be used. Defaults to False.
             position_id (int, optional): Position Id. Defaults to 0.
+            tp (float, optional): Take Profit. Defaults to None.
+            sl (float, optional): Stop Loss. Defaults to None.
 
         Returns:
             int|str: order_id or "" if order could not be placed
@@ -1246,6 +1250,8 @@ class TLAPI:
             "validity": validity,
             "tradableInstrumentId": str(instrument_id),
             "type": type_,
+            "takeProfit": tp,
+            "stopLoss": sl,
         }
 
         if position_id != 0:
