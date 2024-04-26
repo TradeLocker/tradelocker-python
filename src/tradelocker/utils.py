@@ -61,23 +61,17 @@ class ColorLogger:
         "critical": logging.CRITICAL,
     }
 
-    def __init__(self, module_name: str, log_level: LogLevelType = "debug"):
-        self.module_name = module_name
-        self.log_level = log_level
+    def __init__(self, log_level: LogLevelType = "debug"):
+        self.logger = logging.getLogger()
 
-        logger = logging.getLogger(module_name)
-
-        if log_level not in self.LOG_LEVELS.keys():
-            raise ValueError(
-                f"log_level ({log_level}) not among {list(self.LOG_LEVELS.keys())}"
-            )
-
-        logger.setLevel(self.LOG_LEVELS[log_level])
+        # remove all handlers from the new logger
+        for handler in self.logger.handlers[:]:
+            self.logger.removeHandler(handler)
 
         handler = logging.StreamHandler()
         handler.setFormatter(
             colorlog.ColoredFormatter(
-                f"%(log_color)s \n[%(levelname)s] {module_name} %(asctime)s %(module)s %(funcName)s: %(lineno)d %(message)s",
+                f"%(log_color)s [%(levelname)s %(asctime)s %(name)s.%(module)s.%(funcName)s:%(lineno)d]: %(message)s",
                 datefmt=None,
                 reset=True,
                 log_colors={
@@ -92,11 +86,22 @@ class ColorLogger:
             )
         )
 
-        logger.addHandler(handler)
-        self.logger = logger
+        self.logger.addHandler(handler)
+        self.set_log_level(log_level)
 
     def get_logger(self) -> logging.Logger:
         return self.logger
+
+    def set_log_level(self, log_level: LogLevelType) -> None:
+        if log_level not in self.LOG_LEVELS.keys():
+            raise ValueError(
+                f"log_level ({log_level}) not among {list(self.LOG_LEVELS.keys())}"
+            )
+
+        self.logger.setLevel(self.LOG_LEVELS[log_level])
+
+
+color_logger = ColorLogger(log_level="debug").get_logger()
 
 
 # This decorator logs the function call and its arguments
@@ -107,10 +112,8 @@ def log_func(func: Callable[..., RT]) -> Callable[..., RT]:
         kwargs_repr = [f"{k}={v!r}" for k, v in kwargs.items()]
         signature = ", ".join(args_repr + kwargs_repr)
 
-        # TODO: using ColorLogger does not work -- debugging needed
-        # log = args[0].log
-        # log.debug(f"**** CALLING {func.__name__}({signature})")
-        # print(f"**** CALLING {func.__name__}({signature})")
+        log = args[0].log
+        log.debug(f"**** CALLING {func.__name__}({signature})")
 
         return_value = func(*args, **kwargs)
 
@@ -121,8 +124,7 @@ def log_func(func: Callable[..., RT]) -> Callable[..., RT]:
                 return_string[:max_return_string_length]
                 + "    ...   ===<< TRUNCATED DUE TO LENGTH >>===   "
             )
-        # print(f"**** RETURN from {func.__name__}({signature}):\n{return_string}")
-        # log.debug(f"**** RETURN from {func.__name__}({signature}):\n{return_string}")
+        log.debug(f"**** RETURN from {func.__name__}({signature}):\n{return_string}")
 
         return return_value
 
@@ -218,13 +220,13 @@ def resolve_lookback_and_timestamps(
 
     try:
         start_timestamp, end_timestamp = timestamps_from_lookback(lookback_period)
-        # ColorLogger(__name__, "debug").get_logger(__name__, "debug").warning(
+        # color_logger.warning(
         #     "Both valid lookback_period and start_timestamp/end_timestamp were provided.\n"
         #     "Continuing with only the start_timestamp/end_timestamp"
         # )
     except Exception as err:
         pass
-        # ColorLogger(__name__, "debug").get_logger(__name__, "debug").warning(
+        # color_logger.warning(
         #     f"Invalid lookback_period provided: {err}\nContinuing with only the start_timestamp/end_timestamp"
         # )
 
@@ -243,7 +245,11 @@ def estimate_history_size(
 
 @tl_typechecked
 def time_to_token_expiry(access_token: str) -> float:
-    # TODO: start verifying the signature
+    if not access_token:
+        logging.warning(f"invalid access token: |{access_token}|")
+        return 0
+
+    # No explicit need to verify the signature as there is a direct https connection between the client and the server
     decoded_payload: dict[str, Any] = jwt.decode(
         access_token, options={"verify_signature": False}
     )
@@ -253,7 +259,7 @@ def time_to_token_expiry(access_token: str) -> float:
 
 
 @tl_typechecked
-# Should be called with    callers_file = __file__
+# Should be called with callers_file = __file__
 def load_env_config(callers_file: str, backup_env_file=".env") -> dict[str, str | int]:
     # Get the current script's directory
     basedir = os.path.abspath(os.path.dirname(callers_file))

@@ -35,9 +35,20 @@ ColumnConfigValuesType: TA = (
     dict[Literal["id", "title"], str] | dict[Literal["columns"], ConfigColumnType]
 )
 
+LimitsType: TA = dict[Literal["limitType", "limit"], str | int | float]
+RateLimitsType: TA = dict[
+    Literal["rateLimitType", "measure", "intervalNum", "limit"],
+    str | int | float,
+]
+
 ConfigType: TA = (
     dict[Literal["customerAccess"], dict[str, bool]]
     | dict[ColumnConfigKeysType, ColumnConfigValuesType]
+    | dict[Literal["limits"], list[LimitsType]]
+    | dict[
+        Literal["rateLimits"],
+        list[RateLimitsType],
+    ]
 )
 
 ResolutionType: TA = Literal["1M", "1W", "1D", "4H", "1H", "30m", "15m", "5m", "1m"]
