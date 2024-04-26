@@ -20,7 +20,8 @@ python = ">=3.11"
 pandas = "2.1.1"
 PyJWT = "2.8.0"
 Requests = "2.31.0"
-typeguard = "4.1.5"
+# typeguard is removed as being a dependency that is installed by since it causes problems with pyinstaller and nuitka -- add it manually if you prefer to use it.
+# typeguard = "4.1.5"
 colorlog = "6.6.0"
 python-dotenv = "1.0.0"
 
