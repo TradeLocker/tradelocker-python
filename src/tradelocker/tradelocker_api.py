@@ -1283,6 +1283,7 @@ class TLAPI:
             "tradableInstrumentId": str(instrument_id),
             "type": type_,
 <<<<<<< HEAD
+<<<<<<< HEAD
             "takeProfit": take_profit,
             "takeProfitType": take_profit_type,
             "stopLoss": stop_loss,
@@ -1292,6 +1293,10 @@ class TLAPI:
             "takeProfit": tp,
             "stopLoss": sl,
 >>>>>>> 2ea23e7 (add take profit and stop loss)
+=======
+            "stopLoss": stop_loss,
+            "takeProfit": take_profit,
+>>>>>>> fae2548 (chore: rename to use full terms for stop_loss and take_profit)
         }
 
         if position_netting:
