@@ -446,7 +446,7 @@ def test_get_config():
     )
 
 
-def test_orders_history_with_unfilled_limit_order(ensure_order_fill: bool = False):
+def test_orders_history_with_limit_order(ensure_order_fill: bool = False):
     # What am I expecting the final order status to be?
     expected_order_status: str = "Cancelled" if not ensure_order_fill else "Filled"
     # Decide whether I am trying to buy or sell for severely under-market price
@@ -489,7 +489,7 @@ def test_orders_history_with_unfilled_limit_order(ensure_order_fill: bool = Fals
             if (
                 order_id in oh_after_order["id"].values
                 and oh_after_order[oh_after_order["id"] == order_id]["status"].values[0]
-                == "filled"
+                == "Filled"
             ):
                 break
             else:
@@ -553,7 +553,7 @@ def test_orders_history_with_unfilled_limit_order(ensure_order_fill: bool = Fals
 
 
 def test_orders_history_with_filled_limit_order():
-    test_orders_history_with_unfilled_limit_order(ensure_order_fill=True)
+    test_orders_history_with_limit_order(ensure_order_fill=True)
 
 
 def test_get_trade_accounts():

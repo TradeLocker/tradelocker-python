@@ -3,7 +3,7 @@ from tradelocker import TLAPI
 from tradelocker.utils import load_env_config
 
 if __name__ == "__main__":
-    config = load_env_config(__file__, backup_env_file="../../.env-tl-studio")
+    config = load_env_config(__file__, backup_env_file="../.env")
 
     # Initialize the API client with the information you use to login
     tl = TLAPI(
