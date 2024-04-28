@@ -86,7 +86,7 @@ class RandomTradingBot:
 
 
 if __name__ == "__main__":
-    config = load_env_config(__file__, backup_env_file="../../.env-tl-studio")
+    config = load_env_config(__file__, backup_env_file="../.env")
 
     tlAPI = TLAPI(
         environment=config["tl_environment"],
