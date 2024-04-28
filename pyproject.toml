@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "tradelocker"
-version = "0.39.0"
+version = "0.40.0"
 description = "TradeLocker Trading API support for Python"
 authors = ["TradeLocker <admin@tradelocker.com>"]
 license = "MIT"
