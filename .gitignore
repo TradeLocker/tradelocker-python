@@ -5,6 +5,7 @@
 .DS_Store
 .coverage
 .env
+.env.*
 .env-test-*
 .env-tl-studio*
 .idea/
