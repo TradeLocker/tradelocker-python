@@ -1329,7 +1329,9 @@ class TLAPI:
             "tradableInstrumentId": str(instrument_id),
             "type": type_,
             "stopLoss": stop_loss,
+            "stopLossType": "absolute",
             "takeProfit": take_profit,
+            "takeProfitType": "absolute",
         }
 
         if position_netting:
