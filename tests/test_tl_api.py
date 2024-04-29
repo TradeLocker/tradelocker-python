@@ -126,6 +126,18 @@ def test_get_instrument_id():
     with pytest.raises(ValueError):
         tl.get_instrument_id_from_symbol_name("DOESNOTEXIST")
 
+    all_instruments = tl.get_all_instruments()
+    assert eurusd_id in all_instruments["tradableInstrumentId"].values
+
+    eurusdSymbolId = int(
+        all_instruments[all_instruments["tradableInstrumentId"] == eurusd_id][
+            "id"
+        ].values[0]
+    )
+
+    eurusd_id_from_symbol_id = tl.get_instrument_id_from_symbol_id(eurusdSymbolId)
+    assert eurusd_id_from_symbol_id == eurusd_id
+
 
 # TODO: test this properly!
 def test_all_executions():
@@ -157,13 +169,53 @@ def test_old_history():
     prices_history_2022 = tl.get_price_history(
         default_instrument_id,
         resolution="1H",
-        start_timestamp=1651396149000,
-        end_timestamp=1656666549000,
+        start_timestamp=ts_2022_05_01,
+        end_timestamp=ts_2022_07_01,
     )
 
     assert not prices_history_2022.empty
     # size > 100
     assert len(prices_history_2022) > 100
+
+
+def test_multiton_single_account():
+    tl2 = TLAPI(
+        environment=config["tl_environment"],
+        username=config["tl_email"],
+        password=config["tl_password"],
+        server=config["tl_server"],
+        acc_num=int(config["tl_acc_num"]),
+    )
+
+    assert tl2
+    assert tl2 == tl
+
+
+def test_multiton_multiple_accounts():
+    all_account_nums = tl.get_all_accounts()["accNum"]
+
+    # Check that there are more than one account in the list (required for testing)
+    if len(all_account_nums) == 1:
+        pytest.skip("Need more than one account to test multiton")
+
+    assert len(all_account_nums) > 1, "Need more than one account to test multiton"
+
+    other_acc_num = -1
+    for acc_num in all_account_nums:
+        if acc_num != config["tl_acc_num"]:
+            other_acc_num = acc_num
+            break
+
+    tl3 = TLAPI(
+        environment=config["tl_environment"],
+        username=config["tl_email"],
+        password=config["tl_password"],
+        server=config["tl_server"],
+        acc_num=int(other_acc_num),
+    )
+
+    assert tl3
+    assert tl3 != tl
 
 
 def test_price_history():
@@ -185,19 +237,22 @@ def test_price_history():
         )
         assert price_history == None
 
+    # Should fail since "m4" is not a good lookback period value
     with pytest.raises(ValueError):
         price_history = tl.get_price_history(
             default_instrument_id, resolution="15m", lookback_period="m4"
         )
 
+    # Should fail due to trying to fetch too much data
     with pytest.raises(ValueError):
         tl.get_price_history(
-            default_instrument_id, resolution="1m", lookback_period="8M"
+            default_instrument_id, resolution="5m", lookback_period="5Y"
         )
 
+    # Should also fail due to fetching too much data
     with pytest.raises(ValueError):
         tl.get_price_history(
-            default_instrument_id, resolution="1m", lookback_period="1M"
+            default_instrument_id, resolution="1m", lookback_period="2Y"
         )
 
     price_history_15m_1M = tl.get_price_history(
@@ -391,7 +446,7 @@ def test_get_config():
     )
 
 
-def test_orders_history_with_unfilled_limit_order(ensure_order_fill: bool = False):
+def test_orders_history_with_limit_order(ensure_order_fill: bool = False):
     # What am I expecting the final order status to be?
     expected_order_status: str = "Cancelled" if not ensure_order_fill else "Filled"
     # Decide whether I am trying to buy or sell for severely under-market price
@@ -434,7 +489,7 @@ def test_orders_history_with_unfilled_limit_order(ensure_order_fill: bool = Fals
             if (
                 order_id in oh_after_order["id"].values
                 and oh_after_order[oh_after_order["id"] == order_id]["status"].values[0]
-                == "filled"
+                == "Filled"
             ):
                 break
             else:
@@ -498,7 +553,7 @@ def test_orders_history_with_unfilled_limit_order(ensure_order_fill: bool = Fals
 
 
 def test_orders_history_with_filled_limit_order():
-    test_orders_history_with_unfilled_limit_order(ensure_order_fill=True)
+    test_orders_history_with_limit_order(ensure_order_fill=True)
 
 
 def test_get_trade_accounts():

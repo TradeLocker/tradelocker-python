@@ -7,8 +7,10 @@ from typing import cast, Literal, Optional, Tuple
 import requests
 import pandas as pd
 
+import logging
+
 from tradelocker.utils import (
-    ColorLogger,
+    color_logger,
     log_func,
     get_nested_key,
     resolve_lookback_and_timestamps,
@@ -27,6 +29,7 @@ from .types import (
     ConfigColumnType,
     ConfigType,
     InstrumentDetailsType,
+    LimitsType,
     LocaleType,
     LogLevelType,
     MarketDepthlistType,
@@ -62,7 +65,6 @@ from time import sleep
 
 # Constants
 _TIMEOUT: Tuple[int, int] = (10, 30)  # (connection_timeout, read_timeout
-_MAX_HISTORY_ROWS: int = 40000
 _EPS: float = 0.00001
 _MIN_LOT_SIZE: float = (
     0.01  ## TODO: this should probably be fetched per-instrument from BE
@@ -77,6 +79,28 @@ class TLAPI:
     See https://tradelocker.com/api/ for more information.
     """
 
+    _instances = {}
+
+    # This is here to ensure that users don't accidentally create multiple instances
+    # of the same TLAPI object, which would lead to multiple connections to the API for no reason.
+    # However, different instances can be created with different parameters,
+    # or a new instance will be created in case the access token has expired.
+    def __new__(cls, *args, **kwargs):
+        multiton_key = (cls, args, frozenset(kwargs.items()))
+        # Generate a new instance only if the key is not in the instances dict or the access token has expired
+
+        if (
+            multiton_key in cls._instances
+            and hasattr(cls._instances[multiton_key], "_access_token")
+            and time_to_token_expiry(cls._instances[multiton_key]._access_token) > 0
+        ):
+            # Just warn the user, and reuse the existing instance
+            logging.warning(f"Reusing existing TLAPI instance for {cls.__name__}")
+        else:
+            # Create a new instance
+            cls._instances[multiton_key] = super(TLAPI, cls).__new__(cls)
+        return cls._instances[multiton_key]
+
     @tl_typechecked
     def __init__(
         self,
@@ -90,6 +114,11 @@ class TLAPI:
         acc_num: int = 0,
         log_level: LogLevelType = "debug",
     ) -> None:
+        # Those object with _initialized tag have already been initialized,
+        # so there is no need to re-initialize anything.
+        if hasattr(self, "_initialized") and self._initialized:
+            return
+
         """Initializes the TradeLocker API client."""
         self._base_url: str = f"{environment}/backend-api"
         self._credentials: Optional[CredentialsType] = None
@@ -107,7 +136,7 @@ class TLAPI:
                 "server": server,
             }
 
-        self.log = ColorLogger(__name__, log_level=log_level).get_logger()
+        self.log = color_logger
 
         if self._credentials:
             self._auth_with_password(
@@ -122,6 +151,8 @@ class TLAPI:
         else:
             error_msg = f"Either username/pass/server, or access_token/refresh_token must be provided!"
             raise Exception(error_msg)
+
+        self._initialized = True
 
     def get_base_url(self) -> str:
         """Returns the base URL of the API."""
@@ -240,7 +271,7 @@ class TLAPI:
         """Returns the column names of values in orders/positions, etc. from the /config endpoint
 
         Args:
-            object_name (_ColumnConfigKeysType): The name of the object to get the column names for
+            object_name (ColumnConfigKeysType): The name of the object to get the column names for
         Returns:
             list[str]: The column names
         """
@@ -269,6 +300,17 @@ class TLAPI:
     def _get_info_route_id(self, instrument_id: int) -> str:
         """Returns the "INFO" route_id for the specified instrument_id"""
         return self._get_route_id(instrument_id, "INFO")
+
+    @lru_cache
+    def _get_max_history_rows(self) -> int:
+        config_dict: ConfigType = self.get_config()
+        limits: list[LimitsType] = get_nested_key(
+            config_dict, ["limits"], list[LimitsType]
+        )
+        for limit in limits:
+            if limit["limitType"] == "QUOTES_HISTORY_BARS":
+                return limit["limit"]
+        raise Exception("Failed to fetch max history rows")
 
     @tl_typechecked
     def _get_route_id(self, instrument_id: int, route_type: RouteTypeType) -> str:
@@ -418,10 +460,11 @@ class TLAPI:
 
     ############################## PUBLIC UTILS #######################
 
-    @log_func
     @tl_typechecked
+    @lru_cache
+    @log_func
     def get_instrument_id_from_symbol_name(self, symbol_name: str) -> int:
-        """Returns the instrument Id from the given symol.
+        """Returns the instrument Id from the given symol's name.
 
         Args:
             symbol_name (str): Name of the symbol, for example `BTCUSD`
@@ -435,7 +478,37 @@ class TLAPI:
         all_instruments: pd.DataFrame = self.get_all_instruments()
         matching_instruments = all_instruments[all_instruments["name"] == symbol_name]
         if len(matching_instruments) == 0:
-            raise ValueError(f"No instrument found with symbol = {symbol_name}")
+            raise ValueError(f"No instrument found with {symbol_name=}")
+        if len(matching_instruments) > 1:
+            self.log.warning(
+                f"Multiple instruments found with {symbol_name=}. Using the first one."
+            )
+
+        return int(matching_instruments["tradableInstrumentId"].iloc[0])
+
+    @log_func
+    @tl_typechecked
+    def get_instrument_id_from_symbol_id(self, symbol_id: int) -> int:
+        """Returns the instrument Id from the given symbol's id.
+
+        Args:
+            symbol_id (int): Id the symbol
+
+        Raises:
+            ValueError: Will be raised if instrument was with given symbol id was not found
+
+        Returns:
+            int: On success the instrument Id will be returned
+        """
+        all_instruments: pd.DataFrame = self.get_all_instruments()
+        matching_instruments = all_instruments[all_instruments["id"] == symbol_id]
+        if len(matching_instruments) == 0:
+            raise ValueError(f"No instrument found with {symbol_id=}")
+        if len(matching_instruments) > 1:
+            self.log.warning(
+                f"Multiple instruments found with {symbol_id=}. Using the first one."
+            )
+
         return int(matching_instruments["tradableInstrumentId"].iloc[0])
 
     @log_func
@@ -456,16 +529,21 @@ class TLAPI:
         if len(matching_instruments) == 0:
             raise ValueError(f"No instrument found with id = {instrument_id}")
 
-        print(f"(get_symbol_name_from_instrument_id) instrument_id: {instrument_id}")
-        print(f"matching_instruments:\n{matching_instruments}")
+        self.log.debug(
+            f"(get_symbol_name_from_instrument_id) instrument_id: {instrument_id}"
+        )
+        self.log.debug(f"matching_instruments:\n{matching_instruments}")
         return matching_instruments["name"].iloc[0]
 
     @log_func
     @tl_typechecked
     def close_all_positions(self, instrument_id_filter: int = 0) -> bool:
-        """Closes all open positions.
+        """Places an order to close all open positions.
 
-        If instrument_id is provied, only positions in this instrument will be closed
+        If instrument_id is provied, only positions in this instrument will be closed.
+
+        IMPORTANT: Isn't guaranteed to close all positions, or close them immediately.
+        Will attempt to place an IOC, then GTC closing order, so the execution might be delayed.
 
         Args:
             instrument_id_filter (int, optional): _description_. Defaults to 0.
@@ -573,10 +651,13 @@ class TLAPI:
     def close_position(
         self, order_id: int = 0, position_id: int = 0, close_quantity: float = 0
     ) -> None:
-        """Closes a position.
+        """Places an order to closee a position.
 
         Either the order_id or the position_id needs to be provided. If both are
         provided, the order_id will be used and the position_id will be ignored.
+
+        IMPORTANT: Isn't guaranteed to close the position, or close it immediately.
+        Will attempt to place an IOC, then GTC closing order, so the execution might be delayed.
 
         Args:
             order_id (int, optional): The order id. Defaults to 0.
@@ -683,8 +764,8 @@ class TLAPI:
         self._access_token = get_nested_key(response_json, ["accessToken"], str)
         self._refresh_token = get_nested_key(response_json, ["refreshToken"], str)
 
-    @log_func
     @lru_cache(maxsize=1)
+    @log_func
     @tl_typechecked
     def get_all_accounts(self) -> pd.DataFrame:
         """Returns all accounts associated with the account used for authentication.
@@ -712,14 +793,14 @@ class TLAPI:
 
     ############################## CONFIG ROUTES ##########################
 
-    @log_func
     @lru_cache(maxsize=1)
+    @log_func
     @tl_typechecked
     def get_config(self) -> ConfigType:
         """Returns the user's configuration.
 
         Returns:
-            _ConfigType: The configuration
+            ConfigType: The configuration
         """
         route_url = f"{self._base_url}/trade/config"
         response_json = self._request_get(route_url)
@@ -736,7 +817,7 @@ class TLAPI:
         The account is defined by the acc_num used in constructor.
 
         Returns:
-            _TradeAccountsType: The account details
+            TradeAccountsType: The account details
         """
         route_url = f"{self._base_url}/trade/accounts"
 
@@ -768,8 +849,8 @@ class TLAPI:
 
         return all_executions
 
-    @log_func
     @lru_cache(maxsize=1)
+    @log_func
     def get_all_instruments(self) -> pd.DataFrame:
         """Returns all available instruments for account.
 
@@ -884,10 +965,10 @@ class TLAPI:
 
         Args:
             instrument_id (int): The instrument Id
-            locale (_LocaleType, optional): Locale (language) id. Defaults to "en".
+            locale (LocaleType, optional): Locale (language) id. Defaults to "en".
 
         Returns:
-            _InstrumentDetailsType: The instrument details
+            InstrumentDetailsType: The instrument details
         """
         route_url = f"{self._base_url}/trade/instruments/{instrument_id}"
 
@@ -910,7 +991,7 @@ class TLAPI:
             session_id (int): Session id
 
         Returns:
-            _SessionDetailsType: Session details
+            SessionDetailsType: Session details
         """
         route_url = f"{self._base_url}/trade/sessions/{session_id}"
 
@@ -931,7 +1012,7 @@ class TLAPI:
             session_status_id (int): Session id
 
         Returns:
-            _SessionStatusDetailsType: Session details
+            SessionStatusDetailsType: Session details
         """
         route_url = f"{self._base_url}/trade/sessionStatuses/{session_status_id}"
 
@@ -955,7 +1036,7 @@ class TLAPI:
             bar_type (Literal[BID, ASK, TRADE], optional): The type of candle data to return. Defaults to "ASK".
 
         Returns:
-            _DailyBarType: Daily candle data
+            DailyBarType: Daily candle data
         """
         route_url = f"{self._base_url}/trade/dailyBar"
 
@@ -981,7 +1062,7 @@ class TLAPI:
             instrument_id (int): Instrument Id
 
         Returns:
-            _MarketDepthlistType: Market depth data
+            MarketDepthlistType: Market depth data
         """
         route_url = f"{self._base_url}/trade/depth"
 
@@ -1012,7 +1093,7 @@ class TLAPI:
 
         Args:
             instrument_id (int): Instrument Id
-            resolution (_ResolutionType, optional): Data resolution. Defaults to "15m".
+            resolution (ResolutionType, optional): Data resolution. Defaults to "15m".
             lookback_period (str, optional): Lookback period (for example "5m"). Defaults to "".
             start_timestamp (int, optional): Start timestamp (in ms). Defaults to 0.
             end_timestamp: (int, optional): End timestamp (in ms). Defaults to 0.
@@ -1030,9 +1111,9 @@ class TLAPI:
         )
 
         history_size = estimate_history_size(start_timestamp, end_timestamp, resolution)
-        if history_size > _MAX_HISTORY_ROWS:
+        if history_size > self._get_max_history_rows():
             raise ValueError(
-                f"No. of requested rows ({history_size}) larger than max allowed ({_MAX_HISTORY_ROWS})."
+                f"No. of requested rows ({history_size}) larger than max allowed ({self._get_max_history_rows()})."
                 "Try splitting your request in smaller chunks."
             )
 
@@ -1107,7 +1188,7 @@ class TLAPI:
             instrument_id (int): Instrument Id
 
         Returns:
-            _QuotesType: Price quotes for instrument
+            QuotesType: Price quotes for instrument
         """
         route_url = f"{self._base_url}/trade/quotes"
 
@@ -1134,7 +1215,7 @@ class TLAPI:
 
         Args:
             instrument_id (int): Instrument Id
-            new_position_side (_SideType): Side to which we want to increase the position
+            new_position_side (SideType): Side to which we want to increase the position
             quantity (float): Order size
 
         Returns:
@@ -1200,10 +1281,10 @@ class TLAPI:
         Args:
             instrument_id (int): Instrument Id
             quantity (float): Order size
-            side (_SideType): Order side
+            side (SideType): Order side
             price (float, optional): Price for non-market orders. Defaults to 0.
-            type_ (_OrderTypeType, optional): Order type. Defaults to "market".
-            validity (_ValidityType, optional): Validity type of order. Defaults to "IOC".
+            type_ (OrderTypeType, optional): Order type. Defaults to "market".
+            validity (ValidityType, optional): Validity type of order. Defaults to "IOC".
             position_netting (bool, optional): Should position netting be used. Defaults to False.
             take_profit (float, optional): Take profit value. Defaults to None.
             take_profit_type (_TakeProfitType, optional): Take profit type. Defaults to None.
@@ -1291,11 +1372,7 @@ class TLAPI:
 
         if position_netting:
             # Try finding opposite orders to net against
-            if type_ != "market":
-                self.log.warning(
-                    "Order netting is only supported for market orders. Continuing without netting."
-                )
-            else:
+            if type_ == "market":
                 total_netted = self._perform_order_netting(
                     instrument_id, side, quantity
                 )
@@ -1357,11 +1434,11 @@ class TLAPI:
     def modify_order(
         self, order_id: int, modification_params: ModificationParamsType
     ) -> bool:
-        """Modifies a pending order.
+        """Modifies a pending order -- a thin wrapper around PATCH /trade/orders/{order_id}.
 
         Args:
             order_id (int): Order Id
-            modification_params (_ModificationParamsType): Order modification details
+            modification_params (ModificationParamsType): Order modification details
 
         Returns:
             bool: True on success, False on error
