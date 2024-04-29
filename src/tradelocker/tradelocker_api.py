@@ -1177,6 +1177,7 @@ class TLAPI:
 
         return total_netted
 
+    # TODO: add tests for sl/tp
     @log_func
     @tl_typechecked
     def create_order(
@@ -1380,7 +1381,6 @@ class TLAPI:
         return response_status == "ok"
 
     # TODO: write tests for this
-
     @log_func
     @tl_typechecked
     def modify_position(
@@ -1409,31 +1409,25 @@ class TLAPI:
         response_status: str = get_nested_key(response_json, ["s"], str)
         return response_status == "ok"
 
-    # # TODO: finish this
-    # @log_func
-    # @tl_typechecked
-    # # This still needs to be tested.
-    # def get_execution_id_by_order_id(self, order_id: int) -> Optional[int]:
-    #     """Retrieves execution id from the order id.
+    # TODO: test this
+    @log_func
+    @tl_typechecked
+    def get_position_id_from_order_id(self, order_id: int) -> Optional[int]:
+        """Retrieves position_id from the given order_id (if one exists).
 
-    #     Args:
-    #         order_id (int): An order id
+        Args:
+            order_id (int): An order id
 
-    #     Returns:
-    #         Optional[int]: Execution id or None
-    #     """
-    #     self.log.info(f"Getting execution id from orders history")
-    #     orders_history = self.get_all_orders(history=True)
+        Returns:
+            Optional[int]: position_id or None
+        """
+        self.log.info(f"Getting execution id from orders history")
+        orders_history = self.get_all_orders(history=True)
 
-    #     matching_orders = orders_history[orders_history["orderId"]==order_id]
-    #     if len(matching_orders) == 0:
-    #         self.log.info(f"No matching order found for order_id: {order_id}")
-    #         return None
+        matching_orders = orders_history[orders_history["id"] == order_id]
+        if len(matching_orders) == 0:
+            self.log.info(f"No matching order found for order_id: {order_id}")
+            return None
 
-    #     execution_id = int(["executionId"].iloc(0))
-    #     return execution_id
-
-    #     # for execution in orders_history["d"]["ordersHistory"]:
-    #     #     if str(order_id) in execution:
-    #     #         execution_order_id = int(execution[16])
-    #     #         return execution_order_id
+        position_id = int(matching_orders["positionId"].iloc[0])
+        return position_id
