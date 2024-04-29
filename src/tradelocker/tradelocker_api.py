@@ -771,7 +771,7 @@ class TLAPI:
         """Returns all accounts associated with the account used for authentication.
 
         Raises:
-            Exception: Will be raised if account informations could not be fetched
+            Exception: Will be raised if account information could not be fetched
 
         Returns:
             pd.DataFrame[AccountsColumnsTypes]: DataFrame with user's accounts
@@ -1148,13 +1148,13 @@ class TLAPI:
     @log_func
     @tl_typechecked
     def get_latest_asking_price(self, instrument_id: int) -> float:
-        """Returns latest price informations for requested instrument.
+        """Returns latest asking price for requested instrument.
 
         Args:
             instrument_id (int): Instrument Id
 
         Returns:
-            float: Latest price of the instrument
+            float: Latest asking price of the instrument
         """
         current_quotes: dict[str, float] = cast(
             dict[str, float], self.get_quotes(instrument_id)
@@ -1165,13 +1165,13 @@ class TLAPI:
     @log_func
     @tl_typechecked
     def get_latest_bid_price(self, instrument_id: int) -> float:
-        """Returns latest price informations for requested instrument.
+        """Returns latest bid price for requested instrument.
 
         Args:
             instrument_id (int): Instrument Id
 
         Returns:
-            float: Latest price of the instrument
+            float: Latest bid price of the instrument
         """
         current_quotes: dict[str, float] = cast(
             dict[str, float], self.get_quotes(instrument_id)
@@ -1258,6 +1258,7 @@ class TLAPI:
 
         return total_netted
 
+    # TODO: add tests for sl/tp
     @log_func
     @tl_typechecked
     def create_order(
@@ -1265,16 +1266,16 @@ class TLAPI:
         instrument_id: int,
         quantity: float,
         side: SideType,
-        price: float = 0,
+        price: Optional[float] = None,
         type_: OrderTypeType = "market",
         validity: Optional[ValidityType] = None,
         position_netting: bool = False,
-        take_profit: Optional[float] = 0,
+        take_profit: Optional[float] = None,
         take_profit_type: Optional[TakeProfitType] = None,
-        stop_loss: Optional[float] = 0,
+        stop_loss: Optional[float] = None,
         stop_loss_type: Optional[StopLossType] = None,
         stop_price: Optional[float] = None,
-    ) -> int | str:
+    ) -> Optional[int]:
         """Creates an order.
 
         Args:
@@ -1285,17 +1286,19 @@ class TLAPI:
             type_ (OrderTypeType, optional): Order type. Defaults to "market".
             validity (ValidityType, optional): Validity type of order. Defaults to "IOC".
             position_netting (bool, optional): Should position netting be used. Defaults to False.
-            stop_loss (float, optional): Stop Loss. Defaults to None.
-            take_profit (float, optional): Take Profit. Defaults to None.
+            take_profit (float, optional): Take profit value. Defaults to None.
+            take_profit_type (_TakeProfitType, optional): Take profit type. Defaults to None.
+            stop_loss (float, optional): Stop loss value. Defaults to None.
+            stop_loss_type (_StopLossType, optional): Stop loss type. Defaults to None.
 
         Returns:
-            Optional[int]: order_id or None if order could not be placed
+            Optional[int]: Order Id if order created, otherwise None
         """
         route_url = f"{self._base_url}/trade/accounts/{self.account_id}/orders"
 
-        if type_ == "market" and price != 0:
+        if type_ == "market" and price:
             self.log.warning("Price specified for a market order. Ignoring the price.")
-            price = 0
+            price = None
 
         if type_ == "market":
             if validity and validity != "IOC":
@@ -1306,23 +1309,25 @@ class TLAPI:
                 raise ValueError(error_msg)
             else:
                 validity = "IOC"
+        elif validity and validity != "GTC":
+            error_msg = (
+                f"{type_} orders must use GTC as validity. Not placing the order."
+            )
+            self.log.error(error_msg)
+            raise ValueError(error_msg)
 
-        if type_ == "limit" or type_ == "stop":
-            if (type == "stop") and stop_price == None:
-                stop_price = price
-                price = 0
-                self.log.warning(
-                    f"Order of {type_ = } specified, but no stop_price set. Using price as stop price"
+        if type == "stop" and stop_price == None:
+            if not price:
+                self.log.error(
+                    "Stop orders must have a stop price set. Not placing the order."
                 )
+                return None
 
-            if type_ in ["limit", "stop"] and validity and validity != "GTC":
-                error_msg = (
-                    f"{type_} orders must use GTC as validity. Not placing the order."
-                )
-                self.log.error(error_msg)
-                raise ValueError(error_msg)
-            else:
-                validity = "GTC"
+            stop_price = price
+            price = None
+            self.log.warning(
+                f"Order of {type_ = } specified, but no stop_price set. Using price as stop price."
+            )
 
         # Make sure that quantity is positive. If not, switch the side of the order
         if quantity < 0:
@@ -1358,27 +1363,12 @@ class TLAPI:
             "validity": validity,
             "tradableInstrumentId": str(instrument_id),
             "type": type_,
-            "stopLoss": stop_loss,
             "takeProfit": take_profit,
+            "takeProfitType": take_profit_type,
+            "stopLoss": stop_loss,
+            "stopLossType": stop_loss_type,
+            "stopPrice": stop_price,
         }
-
-        if take_profit:
-            if not take_profit_type:
-                self.log.warning(
-                    "Unable to place an order with a take profit without a take_profit_type"
-                )
-                return ""
-            request_body["takeProfit"] = take_profit
-            request_body["takeProfitType"] = take_profit_type
-
-        if stop_loss:
-            if not stop_loss_type:
-                self.log.warning(
-                    "Unable to place an order with a stop_loss without a stop_loss_type"
-                )
-                return ""
-            request_body["stopLoss"] = (stop_loss,)
-            request_body["stopLossType"] = (stop_loss_type,)
 
         if position_netting:
             # Try finding opposite orders to net against
@@ -1405,7 +1395,6 @@ class TLAPI:
             json=request_body,
             timeout=_TIMEOUT,
         )
-        print(response)
         response_json = self._get_response_json(response)
         try:
             order_id: int = int(get_nested_key(response_json, ["d", "orderId"], str))
@@ -1443,6 +1432,7 @@ class TLAPI:
 
         return response_status == "ok"
 
+    # TODO: add tests that modify the order by adding TP/SL
     @log_func
     @tl_typechecked
     def modify_order(
@@ -1468,10 +1458,10 @@ class TLAPI:
             timeout=_TIMEOUT,
         )
         response_json = self._get_response_json(response)
-        self.log.debug(f"Order modification response: {response_json}")
         response_status: str = get_nested_key(response_json, ["s"], str)
         return response_status == "ok"
 
+    # TODO: write tests for this
     @log_func
     @tl_typechecked
     def modify_position(
@@ -1497,27 +1487,28 @@ class TLAPI:
             timeout=_TIMEOUT,
         )
         response_json = self._get_response_json(response)
-        self.log.debug(f"Position modification response: {response_json}")
         response_status: str = get_nested_key(response_json, ["s"], str)
         return response_status == "ok"
 
+    # TODO: test this
     @log_func
     @tl_typechecked
-    # This still needs to be tested.
-    def get_execution_id_by_order_id(self, order_id: int):
-        """Retrieves execution id from the order id.
+    def get_position_id_from_order_id(self, order_id: int) -> Optional[int]:
+        """Retrieves position_id from the given order_id (if one exists).
 
         Args:
             order_id (int): An order id
 
         Returns:
-            int: Execution id or None
+            Optional[int]: position_id or None
         """
         self.log.info(f"Getting execution id from orders history")
         orders_history = self.get_all_orders(history=True)
-        for execution in orders_history["d"]["ordersHistory"]:
-            if str(order_id) in execution:
-                execution_order_id = int(execution[16])
-                return execution_order_id
 
-        return None
+        matching_orders = orders_history[orders_history["id"] == order_id]
+        if len(matching_orders) == 0:
+            self.log.info(f"No matching order found for order_id: {order_id}")
+            return None
+
+        position_id = int(matching_orders["positionId"].iloc[0])
+        return position_id
