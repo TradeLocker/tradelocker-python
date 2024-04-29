@@ -19,6 +19,11 @@ from tradelocker.types import (
 )
 
 
+LONG_BREAK = 2
+MID_BREAK = 1
+SHORT_BREAK = 0.5
+
+
 # Create the global fixture
 @pytest.fixture(scope="session", autouse=True)
 def setup_everything():
@@ -155,6 +160,20 @@ def test_access_token():
     # Check whether access token was received
     assert hasattr(tl, "_access_token")
     assert tl._access_token != ""
+
+
+def test_get_position_id_from_order_id():
+    order_id = tl.create_order(
+        default_instrument_id, quantity=0.01, side="buy", price=0, type_="market"
+    )
+    sleep(MID_BREAK)
+    position_id = position_id_from_order_id(order_id)
+    assert position_id
+    assert isinstance(position_id, int)
+
+    all_orders = tl.get_all_orders(history=True)
+    assert order_id in all_orders["id"].values
+    assert position_id in all_orders["positionId"].values
 
 
 def test_old_history():
@@ -478,7 +497,7 @@ def test_orders_history_with_limit_order(ensure_order_fill: bool = False):
         validity="GTC",
     )
 
-    sleep(1)
+    sleep(MID_BREAK)
 
     # Let's wait for a max of 10 seconds for the order to be filled
     max_wait_seconds: int = 10
@@ -522,7 +541,7 @@ def test_orders_history_with_limit_order(ensure_order_fill: bool = False):
 
     delete_success = tl.delete_order(order_id)
 
-    sleep(1)
+    sleep(MID_BREAK)
 
     if not ensure_order_fill:
         assert delete_success
@@ -687,11 +706,11 @@ def test_position_netting():
     order1_id = tl.create_order(
         default_instrument_id, quantity=0.01, side="buy", price=0, type_="market"
     )
-    sleep(1)
+    sleep(MID_BREAK)
     order2_id = tl.create_order(
         default_instrument_id, quantity=0.03, side="sell", price=0, type_="market"
     )
-    sleep(1)
+    sleep(MID_BREAK)
     all_positions = tl.get_all_positions()
     # Expected: 0.01 buy ; 0.01 sell
     assert len(all_positions) == 2
@@ -705,7 +724,7 @@ def test_position_netting():
         type_="market",
         position_netting=True,
     )
-    sleep(1)
+    sleep(MID_BREAK)
     # Expected: 0.01 sell (buy was closed due to netting)
     all_positions_netting = tl.get_all_positions()
     assert len(all_positions_netting) == 1
@@ -719,7 +738,7 @@ def test_position_netting():
         type_="market",
         position_netting=True,
     )
-    sleep(1)
+    sleep(MID_BREAK)
     order5_id = tl.create_order(
         default_instrument_id,
         quantity=0.02,
@@ -728,7 +747,7 @@ def test_position_netting():
         type_="market",
         position_netting=True,
     )
-    sleep(1)
+    sleep(MID_BREAK)
 
     all_positions_netting_partial = tl.get_all_positions()
     # Expected: the 0.02 buy actually cancelled the order_4 sell, and reduced the order2's sell side to 0.02
@@ -783,11 +802,11 @@ def test_close_all_positions():
     order_id1 = tl.create_order(
         default_instrument_id, quantity=0.01, side="buy", price=0, type_="market"
     )
-    sleep(1)
+    sleep(MID_BREAK)
     order_id2 = tl.create_order(
         default_instrument_id, quantity=0.02, side="sell", price=0, type_="market"
     )
-    sleep(1)
+    sleep(MID_BREAK)
     instrument_id3 = tl.get_instrument_id_from_symbol_name("ETHUSD")
     order_id3 = tl.create_order(
         instrument_id3, quantity=0.01, side="sell", price=0, type_="market"
@@ -803,13 +822,13 @@ def test_close_all_positions():
     for _ in range(5):
         try:
             position_id1 = position_id_from_order_id(order_id1)
-            sleep(0.5)
+            sleep(SHORT_BREAK)
             position_id2 = position_id_from_order_id(order_id2)
-            sleep(0.5)
+            sleep(SHORT_BREAK)
             position_id3 = position_id_from_order_id(order_id3)
             break
         except ValueError:
-            sleep(2)
+            sleep(LONG_BREAK)
 
     orders_history = tl.get_all_orders(history=True)
     assert order_id1 in orders_history["id"].values
@@ -827,7 +846,7 @@ def test_close_all_positions():
     assert position_id3 in all_positions["id"].values
 
     tl.close_all_positions(instrument_id_filter=instrument_id3)
-    sleep(2)
+    sleep(LONG_BREAK)
 
     # Check that only position_id3 was closed
     all_positions = tl.get_all_positions()
@@ -836,7 +855,7 @@ def test_close_all_positions():
     assert position_id3 not in all_positions["id"].values
 
     tl.close_all_positions()
-    sleep(2)
+    sleep(LONG_BREAK)
 
     # Check that the remaining positions were closed
     all_positions_after_close = tl.get_all_positions()
@@ -883,7 +902,7 @@ def test_modify_and_delete_order():
     assert last_modified_modify > last_modified_buy
 
     tl.delete_order(order_id)
-    sleep(0.5)
+    sleep(SHORT_BREAK)
 
     orders_after_delete = tl.get_all_orders(history=False)
     assert len(orders_after_delete) == len(orders_before)
@@ -895,6 +914,99 @@ def test_modify_and_delete_order():
         oh_after_delete[oh_after_delete["id"] == order_id]["status"].values[0]
         == "Cancelled"
     )
+
+
+def test_modify_position():
+    # Create a position
+    order_id = tl.create_order(
+        default_instrument_id, quantity=0.01, side="buy", price=0, type_="market"
+    )
+    sleep(MID_BREAK)
+    position_id = position_id_from_order_id(order_id)
+    assert position_id
+
+    SL_VAL = 0.01
+    TP_VAL = 10000000
+    # Modify the position
+    tl.modify_position(
+        position_id, modification_params={"stopLoss": SL_VAL, "takeProfit": TP_VAL}
+    )
+
+    sleep(MID_BREAK)
+
+    all_positions = tl.get_all_positions()
+    assert position_id in all_positions["id"].values
+    stop_loss_id = all_positions[all_positions["id"] == position_id][
+        "stopLossId"
+    ].values[0]
+    take_profit_id = all_positions[all_positions["id"] == position_id][
+        "takeProfitId"
+    ].values[0]
+
+    assert stop_loss_id
+    assert take_profit_id
+    assert stop_loss_id != take_profit_id
+
+    # Check that the stop loss and take profit values are correct
+    all_orders = tl.get_all_orders(history=False)
+    assert stop_loss_id in all_orders["id"].values
+    assert take_profit_id in all_orders["id"].values
+
+    stop_loss_order = all_orders[all_orders["id"] == stop_loss_id]
+    take_profit_order = all_orders[all_orders["id"] == take_profit_id]
+
+    assert stop_loss_order["stopPrice"].values[0] == SL_VAL
+    assert take_profit_order["price"].values[0] == TP_VAL
+
+    tl.modify_position(
+        position_id,
+        modification_params={"stopLoss": SL_VAL * 2, "takeProfit": TP_VAL / 2},
+    )
+
+    sleep(MID_BREAK)
+
+    all_orders_after_modify = tl.get_all_orders(history=False)
+    stop_loss_order_after_modify = all_orders_after_modify[
+        all_orders_after_modify["id"] == stop_loss_id
+    ]
+    take_profit_order_after_modify = all_orders_after_modify[
+        all_orders_after_modify["id"] == take_profit_id
+    ]
+
+    assert stop_loss_order_after_modify["stopPrice"].values[0] == SL_VAL * 2
+    assert take_profit_order_after_modify["price"].values[0] == TP_VAL / 2
+
+    # Close the position
+    tl.close_position(position_id=position_id)
+    sleep(MID_BREAK)
+
+    all_positions_after_close = tl.get_all_positions()
+    assert position_id not in all_positions_after_close["id"].values
+
+
+def test_order_with_take_profit_and_stop_loss():
+    SL_VAL = 0.01
+    TP_VAL = 10000000
+
+    # place an order
+    order_id = tl.create_order(
+        default_instrument_id,
+        quantity=0.01,
+        side="buy",
+        price=0,
+        type_="market",
+        stop_loss=SL_VAL,
+        stop_loss_type="absolute",
+        take_profit=TP_VAL,
+        take_profit_type="absolute",
+    )
+    sleep(MID_BREAK)
+
+    all_orders = tl.get_all_orders(history=True)
+    order = all_orders[all_orders["id"] == order_id].iloc[0]
+
+    assert order["stopLoss"] == SL_VAL
+    assert order["takeProfit"] == TP_VAL
 
 
 def test_orders_history_time_ranges_and_instrument_filter():
@@ -911,7 +1023,7 @@ def test_orders_history_time_ranges_and_instrument_filter():
     order_id = tl.create_order(
         instrument_id=LTCUSD_instrument_id, quantity=0.01, side="buy", type_="market"
     )
-    sleep(1)
+    sleep(MID_BREAK)
 
     oh_last_1_day_LTCUSD = tl.get_all_orders(
         history=True, lookback_period="1D", instrument_id_filter=LTCUSD_instrument_id
@@ -920,7 +1032,7 @@ def test_orders_history_time_ranges_and_instrument_filter():
     assert len(oh_last_1_day_LTCUSD) == len(oh_last_1_day_LTCUSD_before) + 1
 
     tl.close_position(order_id=order_id)
-    sleep(1)
+    sleep(MID_BREAK)
 
     oh_last_1_day_LTCUSD_after = tl.get_all_orders(
         history=True, lookback_period="1D", instrument_id_filter=LTCUSD_instrument_id
@@ -935,7 +1047,7 @@ def test_orders_history_time_ranges_and_instrument_filter():
 def test_delete_all_orders():
     # tl.delete_all_orders_manual()
     tl.delete_all_orders()
-    sleep(1)
+    sleep(MID_BREAK)
 
     orders_before = tl.get_all_orders(history=False)
     orders_history_before = tl.get_all_orders(history=True)
@@ -949,7 +1061,7 @@ def test_delete_all_orders():
         type_="limit",
         validity="GTC",
     )
-    sleep(1)
+    sleep(MID_BREAK)
     order_id2: int = tl.create_order(
         default_instrument_id,
         quantity=0.01,
@@ -958,7 +1070,7 @@ def test_delete_all_orders():
         type_="limit",
         validity="GTC",
     )
-    sleep(1)
+    sleep(MID_BREAK)
     instrument_id3 = tl.get_instrument_id_from_symbol_name("ETHUSD")
     order_id3: int = tl.create_order(
         instrument_id3,
@@ -968,7 +1080,7 @@ def test_delete_all_orders():
         type_="limit",
         validity="GTC",
     )
-    sleep(1)
+    sleep(MID_BREAK)
     instrument_id4 = tl.get_instrument_id_from_symbol_name("DOGEUSD")
     order_id4: int = tl.create_order(
         instrument_id4,
@@ -988,7 +1100,7 @@ def test_delete_all_orders():
     assert len(orders_after_buy) == len(orders_before) + 4
 
     tl.delete_all_orders(instrument_id_filter=instrument_id3)
-    sleep(1)
+    sleep(MID_BREAK)
 
     orders_history_after = tl.get_all_orders(history=True)
     orders_after = tl.get_all_orders(history=False)
@@ -1011,7 +1123,7 @@ def test_delete_all_orders():
     # tl.delete_all_orders_manual()
 
     orders_final = tl.get_all_orders(history=False)
-    sleep(0.5)
+    sleep(SHORT_BREAK)
     oh_final = tl.get_all_orders(history=True)
 
     # Check that all order statuses are "Cancelled"

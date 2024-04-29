@@ -1316,6 +1316,16 @@ class TLAPI:
             self.log.error(error_msg)
             raise ValueError(error_msg)
 
+        if stop_loss and not stop_loss_type:
+            warning_msg = "Stop loss value specified, but no stop loss type. Continuing with 'absolute'"
+            self.log.warning(warning_msg)
+            stop_loss_type = "absolute"
+
+        if take_profit and not take_profit_type:
+            warning_msg = "Take profit value specified, but no take profit type. Continuing with 'absolute'"
+            self.log.warning(warning_msg)
+            take_profit_type = "absolute"
+
         if type == "stop" and stop_price == None:
             if not price:
                 self.log.error(
@@ -1432,7 +1442,6 @@ class TLAPI:
 
         return response_status == "ok"
 
-    # TODO: add tests that modify the order by adding TP/SL
     @log_func
     @tl_typechecked
     def modify_order(
@@ -1461,7 +1470,6 @@ class TLAPI:
         response_status: str = get_nested_key(response_json, ["s"], str)
         return response_status == "ok"
 
-    # TODO: write tests for this
     @log_func
     @tl_typechecked
     def modify_position(
@@ -1490,7 +1498,6 @@ class TLAPI:
         response_status: str = get_nested_key(response_json, ["s"], str)
         return response_status == "ok"
 
-    # TODO: test this
     @log_func
     @tl_typechecked
     def get_position_id_from_order_id(self, order_id: int) -> Optional[int]:
