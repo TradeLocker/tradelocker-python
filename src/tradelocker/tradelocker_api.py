@@ -1190,10 +1190,11 @@ class TLAPI:
         validity: Optional[ValidityType] = None,
         position_netting: bool = False,
         position_id: int = 0,
-        take_profit: float = 0,
-        take_profit_type: TakeProfitType = 'absolute',
-        stop_loss: float = 0,
-        stop_loss_type: StopLossType = 'absolute'
+        take_profit: Optional[float] = 0,
+        take_profit_type: Optional[TakeProfitType] = None,
+        stop_loss: Optional[float] = 0,
+        stop_loss_type: Optional[StopLossType] = None,
+        stop_price: Optional[float] = None
     ) -> int | str:
         """Creates an order.
 
@@ -1268,7 +1269,7 @@ class TLAPI:
 
 
         request_body = {
-            "price": float(price),
+            "price": price,
             "stopPrice": stop_price,
             "qty": str(quantity),
             "routeId": self._get_trade_route_id(instrument_id),
@@ -1276,11 +1277,26 @@ class TLAPI:
             "validity": validity,
             "tradableInstrumentId": str(instrument_id),
             "type": type_,
-            "stopLoss": stop_loss,
-            "stopLossType": stop_loss_type,
-            "takeProfit": take_profit,
-            "takeProfitType": take_profit_type,
         }
+
+        if take_profit:
+            if not take_profit_type:
+                self.log.warning(
+                    "Unable to place an order with a take profit without a take_profit_type"
+                )
+                return ""
+            request_body["takeProfit"] = take_profit
+            request_body["takeProfitType"] = take_profit_type
+
+        if stop_loss:
+            if not stop_loss_type:
+                self.log.warning(
+                    "Unable to place an order with a stop_loss without a stop_loss_type"
+                )
+                return ""
+            request_body["stopLoss"] = stop_loss,
+            request_body["stopLossType"] = stop_loss_type,
+            
 
         if position_id != 0:
             request_body["positionId"] = position_id
@@ -1309,6 +1325,7 @@ class TLAPI:
             json=request_body,
             timeout=_TIMEOUT,
         )
+        print(response)
         response_json = self._get_response_json(response)
         try:
             order_id: int = int(get_nested_key(response_json, ["d", "orderId"], str))
