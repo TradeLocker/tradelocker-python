@@ -1209,7 +1209,6 @@ class TLAPI:
             stop_loss (float, optional): Stop loss value. Defaults to None.
             stop_loss_type (_StopLossType, optional): Stop loss type. Defaults to None.
 
-
         Returns:
             Optional[int]: Order Id if order created, otherwise None
         """
@@ -1228,15 +1227,12 @@ class TLAPI:
                 raise ValueError(error_msg)
             else:
                 validity = "IOC"
-
-        if type_ in ["limit", "stop"] and validity and validity != "GTC":
+        elif validity and validity != "GTC":
             error_msg = (
                 f"{type_} orders must use GTC as validity. Not placing the order."
             )
             self.log.error(error_msg)
             raise ValueError(error_msg)
-        else:
-            validity = "GTC"
 
         if type == "stop" and stop_price == None:
             if not price:
@@ -1291,24 +1287,6 @@ class TLAPI:
             "stopLossType": stop_loss_type,
             "stopPrice": stop_price,
         }
-
-        # if take_profit:
-        #     if not take_profit_type:
-        #         self.log.warning(
-        #             "Unable to place an order with a take profit without a take_profit_type"
-        #         )
-        #         return None
-        #     request_body["takeProfit"] = take_profit
-        #     request_body["takeProfitType"] = take_profit_type
-
-        # if stop_loss:
-        #     if not stop_loss_type:
-        #         self.log.warning(
-        #             "Unable to place an order with a stop_loss without a stop_loss_type"
-        #         )
-        #         return ""
-        #     request_body["stopLoss"] = (stop_loss,)
-        #     request_body["stopLossType"] = (stop_loss_type,)
 
         if position_netting:
             # Try finding opposite orders to net against
