@@ -18,6 +18,13 @@ from tradelocker.types import (
     PositionsColumns,
 )
 
+# check if the typeguard is installed and raise an explicit error if not
+try:
+    from typeguard import TypeCheckError
+except ImportError:
+    raise ImportError(
+        "====== To run tests, you should manually install typeguard using 'poetry run pip install typeguard' ====="
+    )
 
 LONG_BREAK = 2
 MID_BREAK = 1
