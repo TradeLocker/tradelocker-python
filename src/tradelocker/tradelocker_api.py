@@ -10,7 +10,6 @@ import pandas as pd
 import logging
 
 from tradelocker.utils import (
-    color_logger,
     log_func,
     get_nested_key,
     resolve_lookback_and_timestamps,
@@ -35,6 +34,8 @@ from .types import (
     MarketDepthlistType,
     ModificationParamsType,
     OrderTypeType,
+    RouteNamesType,
+    RateLimitType,
     StopLossType,
     TakeProfitType,
     RequestsMappingType,
@@ -59,17 +60,7 @@ from .types import (
     int64,
 )
 
-from time import sleep
-
 # More information about the API: https://tradelocker.com/api
-
-# Constants
-_TIMEOUT: Tuple[int, int] = (10, 30)  # (connection_timeout, read_timeout
-_EPS: float = 0.00001
-_MIN_LOT_SIZE: float = (
-    0.01  ## TODO: this should probably be fetched per-instrument from BE
-)
-
 
 class TLAPI:
     """TradeLocker API Client
@@ -78,6 +69,15 @@ class TLAPI:
 
     See https://tradelocker.com/api/ for more information.
     """
+
+    # Constants
+    _TIMEOUT: Tuple[int, int] = (10, 30)  # (connection_timeout, read_timeout
+    _EPS: float = 0.00001
+    _MIN_LOT_SIZE: float = (
+        0.01  ## TODO: this should probably be fetched per-instrument from BE
+    )
+    _LOGGING_FORMAT = "[%(levelname)s %(asctime)s %(module)s.%(funcName)s:%(lineno)d]: %(message)s"
+    _MAX_STRATEGY_ID_LEN = 31
 
     _instances = {}
 
@@ -136,7 +136,7 @@ class TLAPI:
                 "server": server,
             }
 
-        self.log = color_logger
+        logging.basicConfig(level=log_level.upper(), format=self._LOGGING_FORMAT)
 
         if self._credentials:
             self._auth_with_password(
@@ -167,7 +167,7 @@ class TLAPI:
         if not self._access_token or time_to_token_expiry(self._refresh_token) < 0:
             if not self._credentials:
                 error_msg = "Cannot fetch or refresh authentication tokens"
-                self.log.critical(error_msg)
+                logging.critical(error_msg)
                 raise Exception(error_msg)
             else:
                 self._auth_with_password(
@@ -196,7 +196,7 @@ class TLAPI:
                 )
             else:
                 error_msg = "No refresh token found or token expired"
-                self.log.critical(error_msg)
+                logging.critical(error_msg)
                 raise Exception(error_msg)
         return self._refresh_token
 
@@ -204,7 +204,7 @@ class TLAPI:
         all_accounts: pd.DataFrame = self.get_all_accounts()
 
         if all_accounts.empty:
-            self.log.critical("No accounts found")
+            logging.critical("No accounts found")
             raise Exception("No accounts found")
 
         # Pick the correct account, either by having account_id, or acc_num specified
@@ -223,7 +223,7 @@ class TLAPI:
                 "name"
             ].iloc[0]
 
-            self.log.debug(
+            logging.debug(
                 f"Logging in using the specified account_id: {account_id}, using acc_num: {self.acc_num}"
             )
 
@@ -242,11 +242,11 @@ class TLAPI:
                 "name"
             ].iloc[0]
 
-            self.log.debug(
+            logging.debug(
                 f"Logging in using the specified acc_num: {acc_num}, using account_id: {self.account_id}"
             )
         else:
-            self.log.debug(
+            logging.debug(
                 "Neither account_id nor acc_num specified, using the first account"
             )
             # use the last account in the list
@@ -254,7 +254,7 @@ class TLAPI:
             self.acc_num = int(all_accounts["accNum"].iloc[0])
             self.account_name = all_accounts["name"].iloc[0]
 
-            self.log.debug(
+            logging.debug(
                 f"Logging in using the first account, account_id: {self.account_id}, acc_num: {self.acc_num}"
             )
 
@@ -302,7 +302,7 @@ class TLAPI:
         return self._get_route_id(instrument_id, "INFO")
 
     @lru_cache
-    def _get_max_history_rows(self) -> int:
+    def max_price_history_rows(self) -> int:
         config_dict: ConfigType = self.get_config()
         limits: list[LimitsType] = get_nested_key(
             config_dict, ["limits"], list[LimitsType]
@@ -311,6 +311,22 @@ class TLAPI:
             if limit["limitType"] == "QUOTES_HISTORY_BARS":
                 return limit["limit"]
         raise Exception("Failed to fetch max history rows")
+
+    @lru_cache
+    def get_route_rate_limit(self, route_name: RouteNamesType) -> RateLimitType:
+        config_dict: ConfigType = self.get_config()
+        limits: list[LimitsType] = get_nested_key(
+            config_dict, ["rateLimits"], list[RateLimitType]
+        )
+
+        for limit in limits:
+            if limit["rateLimitType"] == route_name:
+                return limit
+
+        raise Exception("Failed to fetch trade rate limit")
+
+    def get_price_history_rate_limit(self) -> RateLimitType:
+        return self.get_route_rate_limit("QUOTES_HISTORY")
 
     @tl_typechecked
     def _get_route_id(self, instrument_id: int, route_type: RouteTypeType) -> str:
@@ -393,7 +409,7 @@ class TLAPI:
             response_json: JSONType = response.json()
             return response_json
         except json.decoder.JSONDecodeError as err:
-            self.log.error(
+            logging.error(
                 f"Failed to decode JSON response from {response.url}. Received response:\n'{response.text}'\n{err}"
             )
             raise err
@@ -426,7 +442,7 @@ class TLAPI:
         params = self._get_params(additional_params)
 
         response = requests.get(
-            url=url, headers=headers, params=params, timeout=_TIMEOUT
+            url=url, headers=headers, params=params, timeout=self._TIMEOUT
         )
         response_json = self._get_response_json(response)
         return response_json
@@ -444,7 +460,7 @@ class TLAPI:
         """
         for column in df.columns:
             if column not in column_types:
-                self.log.error(
+                logging.error(
                     f"Missing type specification for column {column} in {column_types}"
                 )
             else:
@@ -454,15 +470,15 @@ class TLAPI:
                         df[column] = df[column].fillna(0).astype(column_types[column])
 
                 except Exception as err:
-                    self.log.warning(
+                    logging.warning(
                         f"Failed to apply type {column_types[column]} to column {column}: {err}"
                     )
 
     ############################## PUBLIC UTILS #######################
 
-    @tl_typechecked
     @lru_cache
     @log_func
+    @tl_typechecked
     def get_instrument_id_from_symbol_name(self, symbol_name: str) -> int:
         """Returns the instrument Id from the given symol's name.
 
@@ -480,7 +496,7 @@ class TLAPI:
         if len(matching_instruments) == 0:
             raise ValueError(f"No instrument found with {symbol_name=}")
         if len(matching_instruments) > 1:
-            self.log.warning(
+            logging.warning(
                 f"Multiple instruments found with {symbol_name=}. Using the first one."
             )
 
@@ -505,7 +521,7 @@ class TLAPI:
         if len(matching_instruments) == 0:
             raise ValueError(f"No instrument found with {symbol_id=}")
         if len(matching_instruments) > 1:
-            self.log.warning(
+            logging.warning(
                 f"Multiple instruments found with {symbol_id=}. Using the first one."
             )
 
@@ -529,10 +545,10 @@ class TLAPI:
         if len(matching_instruments) == 0:
             raise ValueError(f"No instrument found with id = {instrument_id}")
 
-        self.log.debug(
+        logging.debug(
             f"(get_symbol_name_from_instrument_id) instrument_id: {instrument_id}"
         )
-        self.log.debug(f"matching_instruments:\n{matching_instruments}")
+        logging.debug(f"matching_instruments:\n{matching_instruments}")
         return matching_instruments["name"].iloc[0]
 
     @log_func
@@ -561,7 +577,7 @@ class TLAPI:
             route_url,
             headers=self._get_headers(),
             params=self._get_params(additional_params=additional_params),
-            timeout=_TIMEOUT,
+            timeout=self._TIMEOUT,
         )
         response.raise_for_status()
         response_json = self._get_response_json(response)
@@ -571,7 +587,7 @@ class TLAPI:
     @log_func
     @tl_typechecked
     def delete_all_orders_manual(self, instrument_id_filter: int = 0) -> bool:
-        """Deletes all pending orders.
+        """DEPRECATED -- Use delete_all_orders instead -- Deletes all pending orders, one by one.
 
         If instrument_id is provided, only pending orders in this instrument will be closed
 
@@ -581,7 +597,7 @@ class TLAPI:
         Returns:
             bool: True if executed successfully False otherwise
         """
-        route_url = f"{self._base_url}/trade/accounts/{self.account_id}/orders"
+        logging.warning(f"delete_all_orders_manual is deprecated and will be removed in the future. Use delete_all_orders instead.")
 
         orders = self.get_all_orders(
             history=False, instrument_id_filter=instrument_id_filter
@@ -590,7 +606,6 @@ class TLAPI:
         for index, row in orders.iterrows():
             order_id = row["id"]
             self.delete_order(order_id)
-            sleep(1)
 
         return True
 
@@ -617,7 +632,7 @@ class TLAPI:
             route_url,
             headers=self._get_headers(),
             params=self._get_params(additional_params=additional_params),
-            timeout=_TIMEOUT,
+            timeout=self._TIMEOUT,
         )
         response.raise_for_status()
         response_json = self._get_response_json(response)
@@ -638,7 +653,7 @@ class TLAPI:
             json=data,
             headers=self._get_headers(),
             params=self._get_params(),
-            timeout=_TIMEOUT,
+            timeout=self._TIMEOUT,
         )
         response.raise_for_status()
         response_json = self._get_response_json(response)
@@ -670,7 +685,7 @@ class TLAPI:
         if order_id == 0 and position_id == 0:
             raise ValueError("Either order_id or position_id must be provided!")
         if order_id != 0 and position_id != 0:
-            self.log.warning(
+            logging.warning(
                 "Both order_id and position_id provided. position_id will be ignored."
             )
 
@@ -689,16 +704,16 @@ class TLAPI:
             matching_orders["status"] == "Rejected"
         ]
         if len(rejected_matching_orders.index) > 0:
-            self.log.warning(f"Rejected orders found for {selection_criteria}!")
+            logging.warning(f"Rejected orders found for {selection_criteria}!")
 
         # leave only filled orders
         matching_orders = matching_orders[matching_orders["status"] == "Filled"]
 
         if len(matching_orders.index) == 0:
-            self.log.error(f"No matching position found for {selection_criteria}!")
+            logging.error(f"No matching position found for {selection_criteria}!")
 
         if len(matching_orders.index) > 1:
-            self.log.warning(
+            logging.warning(
                 f"Multiple positions found for {selection_criteria}! Attempting to close all: \n{matching_orders}"
             )
 
@@ -708,9 +723,9 @@ class TLAPI:
                 quantity_to_close = min(quantity_to_close, close_quantity)
                 close_quantity -= quantity_to_close
 
-            if quantity_to_close < _MIN_LOT_SIZE:
-                self.log.warning(
-                    f"Quantity to close ({quantity_to_close}) is less than minimum lot size ({_MIN_LOT_SIZE}). Skipping."
+            if quantity_to_close < self._MIN_LOT_SIZE:
+                logging.warning(
+                    f"Quantity to close ({quantity_to_close}) is less than minimum lot size ({self._MIN_LOT_SIZE}). Skipping."
                 )
                 continue
 
@@ -736,15 +751,15 @@ class TLAPI:
 
         data = {"email": username, "password": password, "server": server}
 
-        response = requests.post(url=route_url, json=data, timeout=_TIMEOUT)
+        response = requests.post(url=route_url, json=data, timeout=self._TIMEOUT)
         try:
             response_json = self._get_response_json(response)
             self._access_token = get_nested_key(response_json, ["accessToken"], str)
             self._refresh_token = get_nested_key(response_json, ["refreshToken"], str)
             assert self._access_token and self._refresh_token
-            self.log.info("Successfully fetched authentication tokens")
+            logging.info("Successfully fetched authentication tokens")
         except Exception as err:
-            self.log.critical(f"Failed to fetch authentication tokens: {err}")
+            logging.critical(f"Failed to fetch authentication tokens: {err}")
             # Explicitly re-raise from err
             raise Exception(f"Failed to fetch authentication tokens: {err}") from err
             # raise Exception(f"Failed to fetch authentication tokens: {err}")
@@ -756,10 +771,10 @@ class TLAPI:
 
         data = {"refreshToken": self._refresh_token}
 
-        response = requests.post(url=route_url, json=data, timeout=_TIMEOUT)
+        response = requests.post(url=route_url, json=data, timeout=self._TIMEOUT)
         response_json = self._get_response_json(response)
 
-        self.log.info("Successfully refreshed authentication tokens")
+        logging.info("Successfully refreshed authentication tokens")
 
         self._access_token = get_nested_key(response_json, ["accessToken"], str)
         self._refresh_token = get_nested_key(response_json, ["refreshToken"], str)
@@ -786,7 +801,7 @@ class TLAPI:
         self._apply_typing(accounts, AccountsColumns)
 
         if not accounts_json or accounts.empty:
-            self.log.critical("Failed to fetch user's accounts")
+            logging.critical("Failed to fetch user's accounts")
             raise Exception("Failed to fetch user's accounts")
 
         return accounts
@@ -798,6 +813,8 @@ class TLAPI:
     @tl_typechecked
     def get_config(self) -> ConfigType:
         """Returns the user's configuration.
+
+        Route Name: GET_CONFIG
 
         Returns:
             ConfigType: The configuration
@@ -816,6 +833,8 @@ class TLAPI:
 
         The account is defined by the acc_num used in constructor.
 
+        Route Name: GET_ACCOUNTS
+
         Returns:
             TradeAccountsType: The account details
         """
@@ -832,6 +851,8 @@ class TLAPI:
     @tl_typechecked
     def get_all_executions(self) -> pd.DataFrame:
         """Returns a list of orders executed in account in current session.
+
+        Route Name: GET_EXECUTIONS
 
         Returns:
             pd.DataFrame[ExecutionsColumnTypes]: DataFrame containing all executed orders
@@ -853,6 +874,8 @@ class TLAPI:
     @log_func
     def get_all_instruments(self) -> pd.DataFrame:
         """Returns all available instruments for account.
+
+        route_name = GET_INSTRUMENTS
 
         Returns:
             pd.DataFrame[InstrumentsColumnsTypes]: DataFrame with all available instruments
@@ -883,6 +906,9 @@ class TLAPI:
         If history is set to False, it will return only orders that have not been executed yet.
         The default value is False.
         If the account has no orders, an empty DataFrame is returned.
+
+        Route Name: GET_ORDERS
+        Route Name: GET_ORDERS_HISTORY
 
         Args:
             history (bool, optional): Should historical orders be returned. Defaults to False.
@@ -926,6 +952,8 @@ class TLAPI:
     def get_all_positions(self) -> pd.DataFrame:
         """Returns all open positions for account.
 
+        Route Name: GET_POSITIONS
+
         Returns:
             pd.DataFrame[PositionsColumnsTypes]: DataFrame containing all positions
         """
@@ -943,6 +971,13 @@ class TLAPI:
     @log_func
     @tl_typechecked
     def get_account_state(self) -> DictValuesType:
+        """Returns the account state.
+
+        Route Name: GET_ACCOUNT_STATE
+
+        Returns:
+            DictValuesType: The account state
+        """
         route_url = f"{self._base_url}/trade/accounts/{self.account_id}/state"
 
         response_json = self._request_get(route_url)
@@ -962,6 +997,8 @@ class TLAPI:
         self, instrument_id: int, locale: LocaleType = "en"
     ) -> InstrumentDetailsType:
         """Returns instrument details for a given instrument Id.
+
+        Route Name: GET_INSTRUMENT_DETAILS
 
         Args:
             instrument_id (int): The instrument Id
@@ -987,6 +1024,8 @@ class TLAPI:
     def get_session_details(self, session_id: int) -> SessionDetailsType:
         """Returns details about the session defined by session_id.
 
+        Route Name: GET_SESSION_DETAILS
+
         Args:
             session_id (int): Session id
 
@@ -1007,6 +1046,8 @@ class TLAPI:
         self, session_status_id: int
     ) -> SessionStatusDetailsType:
         """Returns details about the session status.
+
+        Route Name: GET_SESSION_STATUSES
 
         Args:
             session_status_id (int): Session id
@@ -1030,6 +1071,8 @@ class TLAPI:
         self, instrument_id: int, bar_type: Literal["BID", "ASK", "TRADE"] = "ASK"
     ) -> DailyBarType:
         """Returns daily candle data for requested instrument.
+
+        Route Name: DAILY_BAR
 
         Args:
             instrument_id (int): Instrument Id
@@ -1057,6 +1100,8 @@ class TLAPI:
     @tl_typechecked
     def get_market_depth(self, instrument_id: int) -> MarketDepthlistType:
         """Returns market depth information for the requested instrument.
+
+        Route Name: DEPTH
 
         Args:
             instrument_id (int): Instrument Id
@@ -1091,6 +1136,8 @@ class TLAPI:
     ) -> pd.DataFrame:
         """Returns price history data for the requested instrument.
 
+        Route Name: QUOTES_HISTORY
+
         Args:
             instrument_id (int): Instrument Id
             resolution (ResolutionType, optional): Data resolution. Defaults to "15m".
@@ -1111,9 +1158,9 @@ class TLAPI:
         )
 
         history_size = estimate_history_size(start_timestamp, end_timestamp, resolution)
-        if history_size > self._get_max_history_rows():
+        if history_size > self.max_price_history_rows():
             raise ValueError(
-                f"No. of requested rows ({history_size}) larger than max allowed ({self._get_max_history_rows()})."
+                f"No. of requested rows ({history_size}) larger than max allowed ({self.max_price_history_rows()})."
                 "Try splitting your request in smaller chunks."
             )
 
@@ -1135,7 +1182,7 @@ class TLAPI:
             )
         except KeyError as err:
             if response_json["s"] == "no_data":
-                self.log.warning("No data returned from the API for the given period")
+                logging.warning("No data returned from the API for the given period")
                 # Specify column names to make sure they exist even for empty returns
                 bar_details = pd.DataFrame(columns=["t", "o", "h", "l", "c", "v"])
             else:
@@ -1183,6 +1230,8 @@ class TLAPI:
     @tl_typechecked
     def get_quotes(self, instrument_id: int) -> QuotesType:
         """Returns price quotes for requested instrument.
+
+        Route Name: QUOTES
 
         Args:
             instrument_id (int): Instrument Id
@@ -1241,7 +1290,7 @@ class TLAPI:
                 # Compute how much to close in case a partial close would be needed
                 quantity_to_close = min(position["qty"], float(quantity) - total_netted)
 
-                self.log.info(
+                logging.info(
                     "Closing position {position_id}, {quantity_to_close} due to position_netting order {order}"
                 )
                 self.close_position(
@@ -1250,8 +1299,8 @@ class TLAPI:
                 total_netted += quantity_to_close
 
                 # If sufficient orders have been placed, return
-                if abs(total_netted - float(quantity)) < _EPS:
-                    self.log.debug(
+                if abs(total_netted - float(quantity)) < self._EPS:
+                    logging.debug(
                         "New position completely netted from opposite positions."
                     )
                     break
@@ -1275,8 +1324,11 @@ class TLAPI:
         stop_loss: Optional[float] = None,
         stop_loss_type: Optional[StopLossType] = None,
         stop_price: Optional[float] = None,
+        strategy_id: Optional[str] = None,
     ) -> Optional[int]:
         """Creates an order.
+
+        Route Name: PLACE_ORDER
 
         Args:
             instrument_id (int): Instrument Id
@@ -1297,7 +1349,7 @@ class TLAPI:
         route_url = f"{self._base_url}/trade/accounts/{self.account_id}/orders"
 
         if type_ == "market" and price:
-            self.log.warning("Price specified for a market order. Ignoring the price.")
+            logging.warning("Price specified for a market order. Ignoring the price.")
             price = None
 
         if type_ == "market":
@@ -1305,7 +1357,7 @@ class TLAPI:
                 error_msg = (
                     f"Market orders must use IOC as validity. Not placing the order."
                 )
-                self.log.error(error_msg)
+                logging.error(error_msg)
                 raise ValueError(error_msg)
             else:
                 validity = "IOC"
@@ -1313,29 +1365,29 @@ class TLAPI:
             error_msg = (
                 f"{type_} orders must use GTC as validity. Not placing the order."
             )
-            self.log.error(error_msg)
+            logging.error(error_msg)
             raise ValueError(error_msg)
 
         if stop_loss and not stop_loss_type:
             warning_msg = "Stop loss value specified, but no stop loss type. Continuing with 'absolute'"
-            self.log.warning(warning_msg)
+            logging.warning(warning_msg)
             stop_loss_type = "absolute"
 
         if take_profit and not take_profit_type:
             warning_msg = "Take profit value specified, but no take profit type. Continuing with 'absolute'"
-            self.log.warning(warning_msg)
+            logging.warning(warning_msg)
             take_profit_type = "absolute"
 
         if type == "stop" and stop_price == None:
             if not price:
-                self.log.error(
+                logging.error(
                     "Stop orders must have a stop price set. Not placing the order."
                 )
                 return None
 
             stop_price = price
             price = None
-            self.log.warning(
+            logging.warning(
                 f"Order of {type_ = } specified, but no stop_price set. Using price as stop price."
             )
 
@@ -1343,26 +1395,31 @@ class TLAPI:
         if quantity < 0:
             quantity = abs(quantity)
             side = "sell" if (side == "buy") else "buy"
-            self.log.warning(
+            logging.warning(
                 "Quantity was negative, Continuing by changing the side of the order."
             )
 
         # Make sure that quantity is a multiple of 0.01
         floored_quantity = floor(quantity * 100) / 100
-        if abs(quantity - floored_quantity) > _EPS:
+        if abs(quantity - floored_quantity) > self._EPS:
             old_quantity = quantity
             quantity = floored_quantity
-            self.log.warning(
+            logging.warning(
                 f"Quantity {old_quantity} was not a multiple of 0.01."
                 f"Continuing by rounding down the quantity to {quantity}."
             )
 
         # If the quantity is smaller than the minimum lot size, return
-        if quantity < _MIN_LOT_SIZE:
-            self.log.warning(
-                "Unable to place an order with quantity smaller than min lot size of {_MIN_LOT_SIZE}"
+        if quantity < self._MIN_LOT_SIZE:
+            logging.warning(
+                "Unable to place an order with quantity smaller than min lot size of {self._MIN_LOT_SIZE}"
             )
             return None
+
+        if strategy_id and len(strategy_id) > self._MAX_STRATEGY_ID_LEN:
+            raise ValueError(
+                f"Strategy ID {strategy_id} is too long. Max length is {self._MAX_STRATEGY_ID_LEN}"
+            )
 
         request_body = {
             "price": price,
@@ -1378,6 +1435,7 @@ class TLAPI:
             "stopLoss": stop_loss,
             "stopLossType": stop_loss_type,
             "stopPrice": stop_price,
+            "strategyId": strategy_id,
         }
 
         if position_netting:
@@ -1388,13 +1446,13 @@ class TLAPI:
                 )
                 # Reduce the necessary quantity by the total_amount that was netted
                 request_body["qty"] = str(float(request_body["qty"]) - total_netted)
-                if float(request_body["qty"]) < _MIN_LOT_SIZE:
-                    self.log.info(
+                if float(request_body["qty"]) < self._MIN_LOT_SIZE:
+                    logging.info(
                         "Not placing a new order after closing sufficient opposite orders due to netting."
                     )
                     return None
             else:
-                self.log.warning(
+                logging.warning(
                     "Order netting is only supported for market orders. Continuing without netting."
                 )
 
@@ -1403,21 +1461,22 @@ class TLAPI:
             url=route_url,
             headers=self._get_headers({"Content-type": "application/json"}),
             json=request_body,
-            timeout=_TIMEOUT,
+            timeout=self._TIMEOUT,
         )
         response_json = self._get_response_json(response)
         try:
             order_id: int = int(get_nested_key(response_json, ["d", "orderId"], str))
-            self.log.info(f"Order {request_body} placed with order_id: {order_id}")
+            logging.info(f"Order {request_body} placed with order_id: {order_id}")
             return order_id
         except KeyError as err:
-            self.log.error(f"Unable to place order {request_body}. Error: {err}")
+            logging.error(f"Unable to place order {request_body}. Error: {err}")
             return None
 
     @log_func
     @tl_typechecked
     def delete_order(self, order_id: int) -> bool:
         """Deletes a pending order.
+
 
         Args:
             order_id (int): Order Id
@@ -1427,17 +1486,17 @@ class TLAPI:
         """
         route_url = f"{self._base_url}/trade/orders/{order_id}"
 
-        self.log.info(f"Deleting order with id {order_id}")
+        logging.info(f"Deleting order with id {order_id}")
 
         response = requests.delete(
             url=route_url,
             headers=self._get_headers(),
             params=self._get_params(),
-            timeout=_TIMEOUT,
+            timeout=self._TIMEOUT,
         )
         response_json = self._get_response_json(response)
 
-        self.log.info(f"Order deletion response: {response.json()}")
+        logging.info(f"Order deletion response: {response.json()}")
         response_status: str = get_nested_key(response_json, ["s"], str)
 
         return response_status == "ok"
@@ -1449,6 +1508,8 @@ class TLAPI:
     ) -> bool:
         """Modifies a pending order -- a thin wrapper around PATCH /trade/orders/{order_id}.
 
+        Route Name: MODIFY_ORDER
+
         Args:
             order_id (int): Order Id
             modification_params (ModificationParamsType): Order modification details
@@ -1458,13 +1519,13 @@ class TLAPI:
         """
         route_url = f"{self._base_url}/trade/orders/{order_id}"
 
-        self.log.info(f"Modifying the order with id {order_id}")
+        logging.info(f"Modifying the order with id {order_id}")
 
         response = requests.patch(
             url=route_url,
             headers=self._get_headers({"Content-type": "application/json"}),
             json=modification_params,
-            timeout=_TIMEOUT,
+            timeout=self._TIMEOUT,
         )
         response_json = self._get_response_json(response)
         response_status: str = get_nested_key(response_json, ["s"], str)
@@ -1477,6 +1538,8 @@ class TLAPI:
     ) -> bool:
         """Modifies an open position.
 
+        Route Name: MODIFY_POSITION
+
         Args:
             position_id (int): Position Id
             modification_params (_ModificationParamsType): Position modification details
@@ -1486,13 +1549,13 @@ class TLAPI:
         """
         route_url = f"{self._base_url}/trade/positions/{position_id}"
 
-        self.log.info(f"Modifying the position with id {position_id}")
+        logging.info(f"Modifying the position with id {position_id}")
 
         response = requests.patch(
             url=route_url,
             headers=self._get_headers({"Content-type": "application/json"}),
             json=modification_params,
-            timeout=_TIMEOUT,
+            timeout=self._TIMEOUT,
         )
         response_json = self._get_response_json(response)
         response_status: str = get_nested_key(response_json, ["s"], str)
@@ -1509,12 +1572,12 @@ class TLAPI:
         Returns:
             Optional[int]: position_id or None
         """
-        self.log.info(f"Getting execution id from orders history")
+        logging.info(f"Getting execution id from orders history")
         orders_history = self.get_all_orders(history=True)
 
         matching_orders = orders_history[orders_history["id"] == order_id]
         if len(matching_orders) == 0:
-            self.log.info(f"No matching order found for order_id: {order_id}")
+            logging.info(f"No matching order found for order_id: {order_id}")
             return None
 
         position_id = int(matching_orders["positionId"].iloc[0])

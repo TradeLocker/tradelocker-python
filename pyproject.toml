@@ -4,12 +4,12 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "tradelocker"
-version = "0.41.0"
-description = "TradeLocker Trading API support for Python"
+version = "0.42.0"
+description = "Python client for TradeLocker's Trading API"
 authors = ["TradeLocker <admin@tradelocker.com>"]
 license = "MIT"
 readme = "README.md"
-keywords=["tradelocker","api", "rest", "trading", "exchange", "algotrading", "algo", "bots", "strategies"]
+keywords=["tradelocker","api", "rest", "trading", "algotrading", "algo", "bots", "strategies"]
 urls.Source = "https://github.com/tradelocker/tradelocker-python/"
 urls.Issues = "https://github.com/tradelocker/tradelocker-python/issues"
 
@@ -19,22 +19,21 @@ python = ">=3.11"
 
 pandas = "2.1.1"
 PyJWT = "2.8.0"
-Requests = "2.31.0"
-# typeguard is removed as being a dependency that is installed by since it causes problems with pyinstaller and nuitka -- add it manually if you prefer to use it.
-# typeguard = "4.1.5"
-colorlog = "6.6.0"
+requests = "2.32.2"
 python-dotenv = "1.0.0"
+# typeguard is removed as being a dependency since it causes problems with pyinstaller and nuitka -- add it manually if you prefer to use it or if you want to run tests
+# typeguard = "4.1.5"
 
 [tool.poetry.dev-dependencies]
+poethepoet = "0.26.1"
 pytest = "7.4.2"
 pytest-cov = "4.1.0"
 mypy = "1.5.1"
 mypy-extensions = "1.0.0"
-types-requests = "2.31.0"
+types-requests = "2.32.0.*"
 pandas-stubs = "2.0.3.*"
 pylint = "2.17.7"
-poethepoet = "0.24.2"
-black = "24.3.0"
+black = "23.9.1"
 
 
 [tool.poe.tasks]
