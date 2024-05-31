@@ -6,7 +6,6 @@ import logging
 import os
 
 from dotenv import dotenv_values
-import colorlog
 import jwt
 
 from .types import ResolutionType, LogLevelType
@@ -52,57 +51,6 @@ RESOLUTION_COEFF_MS = {
 }
 
 
-class ColorLogger:
-    LOG_LEVELS = {
-        "debug": logging.DEBUG,
-        "info": logging.INFO,
-        "warning": logging.WARNING,
-        "error": logging.ERROR,
-        "critical": logging.CRITICAL,
-    }
-
-    def __init__(self, log_level: LogLevelType = "debug"):
-        self.logger = logging.getLogger()
-
-        # remove all handlers from the new logger
-        for handler in self.logger.handlers[:]:
-            self.logger.removeHandler(handler)
-
-        handler = logging.StreamHandler()
-        handler.setFormatter(
-            colorlog.ColoredFormatter(
-                f"%(log_color)s [%(levelname)s %(asctime)s %(name)s.%(module)s.%(funcName)s:%(lineno)d]: %(message)s",
-                datefmt=None,
-                reset=True,
-                log_colors={
-                    "DEBUG": "thin_white",
-                    "INFO": "green",
-                    "WARNING": "yellow",
-                    "ERROR": "red",
-                    "CRITICAL": "red,bg_white",
-                },
-                secondary_log_colors={},
-                style="%",
-            )
-        )
-
-        self.logger.addHandler(handler)
-        self.set_log_level(log_level)
-
-    def get_logger(self) -> logging.Logger:
-        return self.logger
-
-    def set_log_level(self, log_level: LogLevelType) -> None:
-        if log_level not in self.LOG_LEVELS.keys():
-            raise ValueError(
-                f"log_level ({log_level}) not among {list(self.LOG_LEVELS.keys())}"
-            )
-
-        self.logger.setLevel(self.LOG_LEVELS[log_level])
-
-
-color_logger = ColorLogger(log_level="debug").get_logger()
-
 
 # This decorator logs the function call and its arguments
 def log_func(func: Callable[..., RT]) -> Callable[..., RT]:
@@ -112,8 +60,7 @@ def log_func(func: Callable[..., RT]) -> Callable[..., RT]:
         kwargs_repr = [f"{k}={v!r}" for k, v in kwargs.items()]
         signature = ", ".join(args_repr + kwargs_repr)
 
-        log = args[0].log
-        log.debug(f"**** CALLING {func.__name__}({signature})")
+        logging.debug(f"**** CALLING {func.__name__}({signature})")
 
         return_value = func(*args, **kwargs)
 
@@ -124,7 +71,7 @@ def log_func(func: Callable[..., RT]) -> Callable[..., RT]:
                 return_string[:max_return_string_length]
                 + "    ...   ===<< TRUNCATED DUE TO LENGTH >>===   "
             )
-        log.debug(f"**** RETURN from {func.__name__}({signature}):\n{return_string}")
+        logging.debug(f"**** RETURN from {func.__name__}({signature}):\n{return_string}")
 
         return return_value
 
@@ -220,15 +167,14 @@ def resolve_lookback_and_timestamps(
 
     try:
         start_timestamp, end_timestamp = timestamps_from_lookback(lookback_period)
-        # color_logger.warning(
-        #     "Both valid lookback_period and start_timestamp/end_timestamp were provided.\n"
-        #     "Continuing with only the start_timestamp/end_timestamp"
-        # )
+        logging.warning(
+            "Both valid lookback_period and start_timestamp/end_timestamp were provided.\n"
+            "Continuing with only the start_timestamp/end_timestamp"
+        )
     except Exception as err:
-        pass
-        # color_logger.warning(
-        #     f"Invalid lookback_period provided: {err}\nContinuing with only the start_timestamp/end_timestamp"
-        # )
+        logging.warning(
+            f"Invalid lookback_period provided: {err}\nContinuing with only the start_timestamp/end_timestamp"
+        )
 
     return start_timestamp, end_timestamp
 
@@ -261,13 +207,16 @@ def time_to_token_expiry(access_token: str) -> float:
 @tl_typechecked
 # Should be called with callers_file = __file__
 def load_env_config(callers_file: str, backup_env_file=".env") -> dict[str, str | int]:
+    """Load the .env file from the path defined in ENV_FILE_PATH or the backup_env_file, relative to current dir
+    """
+
     # Get the current script's directory
-    basedir = os.path.abspath(os.path.dirname(callers_file))
+    script_dir = os.path.abspath(os.path.dirname(callers_file))
 
     env_var_name = "ENV_FILE_PATH"
 
     # read the "$(env_var_name)" environment variable if it exists, otherwise use .env or .env-test
-    env_path = os.environ.get(env_var_name, os.path.join(basedir, backup_env_file))
+    env_path = os.environ.get(env_var_name, os.path.join(script_dir, backup_env_file))
 
     # Load the .env file from that directory
     config: dict[str, str] = dotenv_values(env_path)
@@ -275,3 +224,9 @@ def load_env_config(callers_file: str, backup_env_file=".env") -> dict[str, str 
         config["tl_acc_num"] = 0
 
     return config
+
+
+@tl_typechecked
+def is_more_frequent(resolution1: ResolutionType, resolution2: ResolutionType) -> bool:
+    all_resolutions = ["1m", "5m", "15m", "30m", "1H", "4H", "1D", "1W", "1M"]
+    return all_resolutions.index(resolution1) < all_resolutions.index(resolution2)

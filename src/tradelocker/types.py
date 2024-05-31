@@ -35,10 +35,34 @@ ColumnConfigValuesType: TA = (
     dict[Literal["id", "title"], str] | dict[Literal["columns"], ConfigColumnType]
 )
 
+
+RouteNamesType: TA = Literal[
+    "GET_ACCOUNTS",
+    "GET_EXECUTIONS",
+    "GET_INSTRUMENTS",
+    "GET_ORDERS",
+    "GET_ORDERS_HISTORY",
+    "GET_POSITIONS",
+    "GET_ACCOUNTS_STATE",
+    "GET_INSTRUMENT_DETAILS",
+    "GET_TRADE_SESSIONS",
+    "GET_SESSION_STATUSES",
+    "PLACE_ORDER",
+    "MODIFY_ORDER",
+    "MODIFY_POSITION",
+    "DAILY_BAR",
+    "QUOTES",
+    "DEPTH",
+    "TRADES",
+    "QUOTES_HISTORY",
+]
+
+RateLimitMeasureTypes: TA = Literal["SECONDS", "MINUTES"]
+
 LimitsType: TA = dict[Literal["limitType", "limit"], str | int | float]
-RateLimitsType: TA = dict[
+RateLimitType: TA = dict[
     Literal["rateLimitType", "measure", "intervalNum", "limit"],
-    str | int | float,
+    int | float | RateLimitMeasureTypes | RouteNamesType,
 ]
 
 ConfigType: TA = (
@@ -47,7 +71,7 @@ ConfigType: TA = (
     | dict[Literal["limits"], list[LimitsType]]
     | dict[
         Literal["rateLimits"],
-        list[RateLimitsType],
+        list[RateLimitType],
     ]
 )
 
@@ -85,6 +109,7 @@ ExecutionsColumns: dict[str, type] = {
     "qty": float,
     "orderId": int64,
     "positionId": int64,
+    "tradableInstrumentId": int64,
 }
 
 OrdersColumns: dict[str, type] = {
@@ -109,6 +134,7 @@ OrdersColumns: dict[str, type] = {
     "stopLossType": StopLossType,
     "takeProfit": float,
     "takeProfitType": TakeProfitType,
+    "strategyId": str,
 }
 
 PositionsColumns: dict[str, type] = {
@@ -122,6 +148,7 @@ PositionsColumns: dict[str, type] = {
     "takeProfitId": int64,
     "openDate": int64,
     "unrealizedPl": float,
+    "strategyId": str,
 }
 
 PriceHistoryColumns: dict[str, type] = {

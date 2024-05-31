@@ -3,13 +3,15 @@ import re
 import os
 import pandas as pd
 import pytest
-from typing import Literal
-from typeguard import TypeCheckError
+from typing import Literal, Optional
 from tradelocker.utils import load_env_config, tl_check_type
 from tradelocker import TLAPI
 from tradelocker.types import (
     AccountDetailsColumns,
     InstrumentDetailsType,
+    RateLimitType,
+    RateLimitMeasureTypes,
+    RouteNamesType,
     SessionDetailsType,
     QuotesType,
     QuotesKeyType,
@@ -26,6 +28,8 @@ except ImportError:
         "====== To run tests, you should manually install typeguard using 'poetry run pip install typeguard' ====="
     )
 
+
+# How long do each of the sleeps last?
 LONG_BREAK = 2
 MID_BREAK = 1
 SHORT_BREAK = 0.5
@@ -472,6 +476,22 @@ def test_get_config():
     )
 
 
+def test_rate_limits_config():
+    route_names = RouteNamesType.__args__
+
+    for route_name in route_names:
+        rate_limit_dict = tl.get_route_rate_limit(route_name)
+        assert rate_limit_dict
+        tl_check_type(rate_limit_dict, RateLimitType)
+
+        assert "rateLimitType" in rate_limit_dict
+        assert rate_limit_dict["rateLimitType"] == route_name
+        assert "measure" in rate_limit_dict
+        tl_check_type(rate_limit_dict["measure"], RateLimitMeasureTypes)
+        assert "intervalNum" in rate_limit_dict
+        assert "limit" in rate_limit_dict
+
+
 def test_orders_history_with_limit_order(ensure_order_fill: bool = False):
     # What am I expecting the final order status to be?
     expected_order_status: str = "Cancelled" if not ensure_order_fill else "Filled"
@@ -775,8 +795,10 @@ def test_position_netting():
     assert len(all_positions_netting_full) == 0
 
 
-def position_id_from_order_id(order_id: int) -> int:
-    all_orders = tl.get_all_orders(history=True)
+def position_id_from_order_id(order_id: int, all_orders: Optional[pd.DataFrame] = None) -> int:
+    if all_orders is None:
+        all_orders = tl.get_all_orders(history=True)
+
     matching_orders = all_orders[all_orders["id"] == order_id]
     if len(matching_orders) == 0:
         raise ValueError(f"No order found with order_id = {order_id}")
@@ -1050,10 +1072,65 @@ def test_orders_history_time_ranges_and_instrument_filter():
     oh_full_after = tl.get_all_orders(history=True)
     assert len(oh_full_after) == len(oh_full) + 2
 
+def test_strategy_id_in_orders_and_positions():
+    """ Test whether strategy_id works as expected:
+    1) create a limit order that never executes, check that strategy_id is correct in open orders
+    2) create a market order, check that strategy_id is correct in positions
+    3) try creating another order with a too long strategy_id, check that it fails
+    4) delete all orders
+    """
+
+    # create a limit order
+    order_id = tl.create_order(
+        default_instrument_id,
+        quantity=0.01,
+        side="buy",
+        price=0.01,
+        type_="limit",
+        validity="GTC",
+        strategy_id = "test_strategy_id"
+    )
+    sleep(MID_BREAK)
+    all_orders = tl.get_all_orders(history=False)
+    assert order_id in all_orders["id"].values
+    assert all_orders[all_orders["id"] == order_id]["strategyId"].values[0] == "test_strategy_id"
+
+    # create a market order with a max-length strategy_id
+    max_len_strategy_id = "a" * tl._MAX_STRATEGY_ID_LEN
+    order_id = tl.create_order(
+        default_instrument_id,
+        quantity=0.01,
+        side="buy",
+        type_="market",
+        strategy_id = max_len_strategy_id
+    )
+    sleep(MID_BREAK)
+    all_positions = tl.get_all_positions()
+    final_orders_1D = tl.get_all_orders(history=True, lookback_period="1D")
+    assert order_id in final_orders_1D["id"].values
+    position_id = position_id_from_order_id(order_id, final_orders_1D)
+    assert position_id in all_positions["id"].values
+
+    # try creating an order where strategy_id is longer than _MAX_STRATEGY_ID_LEN
+    with pytest.raises(ValueError):
+        too_long_strategy_id = "b" * (tl._MAX_STRATEGY_ID_LEN + 1)
+        tl.create_order(
+            default_instrument_id,
+            quantity=0.01,
+            side="buy",
+            price=0.01,
+            type_="limit",
+            validity="GTC",
+            strategy_id = too_long_strategy_id
+        )
+
+    # delete all orders
+    tl.delete_all_orders()
+
 
 def test_delete_all_orders():
-    # tl.delete_all_orders_manual()
-    tl.delete_all_orders()
+    tl.delete_all_orders_manual()
+    # tl.delete_all_orders()
     sleep(MID_BREAK)
 
     orders_before = tl.get_all_orders(history=False)
