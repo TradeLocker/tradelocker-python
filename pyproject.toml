@@ -33,7 +33,7 @@ mypy-extensions = "1.0.0"
 types-requests = "2.32.0.*"
 pandas-stubs = "2.0.3.*"
 pylint = "2.17.7"
-black = "23.9.1"
+black = "24.4.2"
 
 
 [tool.poe.tasks]
