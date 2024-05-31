@@ -1111,6 +1111,8 @@ def test_strategy_id_in_orders_and_positions():
     position_id = position_id_from_order_id(order_id, final_orders_1D)
     assert position_id in all_positions["id"].values
 
+    assert all_positions[all_positions["id"] == position_id]["strategyId"].values[0] == max_len_strategy_id
+
     # try creating an order where strategy_id is longer than _MAX_STRATEGY_ID_LEN
     with pytest.raises(ValueError):
         too_long_strategy_id = "b" * (tl._MAX_STRATEGY_ID_LEN + 1)
@@ -1129,8 +1131,7 @@ def test_strategy_id_in_orders_and_positions():
 
 
 def test_delete_all_orders():
-    tl.delete_all_orders_manual()
-    # tl.delete_all_orders()
+    tl.delete_all_orders()
     sleep(MID_BREAK)
 
     orders_before = tl.get_all_orders(history=False)
@@ -1204,7 +1205,6 @@ def test_delete_all_orders():
     assert orders_after[orders_after["id"] == order_id4]["status"].values[0] == "New"
 
     tl.delete_all_orders()
-    # tl.delete_all_orders_manual()
 
     orders_final = tl.get_all_orders(history=False)
     sleep(SHORT_BREAK)
