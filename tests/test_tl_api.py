@@ -1,3 +1,5 @@
+import random
+import string
 from time import sleep
 import re
 import os
@@ -30,9 +32,10 @@ except ImportError:
 
 
 # How long do each of the sleeps last?
-LONG_BREAK = 2
-MID_BREAK = 1
-SHORT_BREAK = 0.5
+# Largely used to not trigger the rate limits and/or to allow the server to process the requests
+LONG_BREAK = 0.3
+MID_BREAK = 0.2
+SHORT_BREAK = 0.1
 
 
 # Create the global fixture
@@ -598,6 +601,34 @@ def test_orders_history_with_limit_order(ensure_order_fill: bool = False):
     # check the order status of the deleted order
 
 
+def test_order_quantities():
+    qts_to_test = {
+        0.001: True,
+        0.0001: True,
+        0.13: False,
+        0.12: False,
+        0.123: True,
+        0.129: True,
+        -0.05: True,
+    }
+    for qty, should_fail in qts_to_test.items():
+        order_id: int = tl.create_order(
+            default_instrument_id,
+            quantity=qty,
+            side="buy",
+            price=0.01,
+            type_="limit",
+            validity="GTC",
+        )
+
+        if should_fail:
+            assert order_id == None
+        else:
+            assert order_id
+
+        sleep(MID_BREAK)
+
+
 def test_orders_history_with_filled_limit_order():
     test_orders_history_with_limit_order(ensure_order_fill=True)
 
@@ -1072,63 +1103,6 @@ def test_orders_history_time_ranges_and_instrument_filter():
     oh_full_after = tl.get_all_orders(history=True)
     assert len(oh_full_after) == len(oh_full) + 2
 
-def test_strategy_id_in_orders_and_positions():
-    """ Test whether strategy_id works as expected:
-    1) create a limit order that never executes, check that strategy_id is correct in open orders
-    2) create a market order, check that strategy_id is correct in positions
-    3) try creating another order with a too long strategy_id, check that it fails
-    4) delete all orders
-    """
-
-    # create a limit order
-    order_id = tl.create_order(
-        default_instrument_id,
-        quantity=0.01,
-        side="buy",
-        price=0.01,
-        type_="limit",
-        validity="GTC",
-        strategy_id = "test_strategy_id"
-    )
-    sleep(MID_BREAK)
-    all_orders = tl.get_all_orders(history=False)
-    assert order_id in all_orders["id"].values
-    assert all_orders[all_orders["id"] == order_id]["strategyId"].values[0] == "test_strategy_id"
-
-    # create a market order with a max-length strategy_id
-    max_len_strategy_id = "a" * tl._MAX_STRATEGY_ID_LEN
-    order_id = tl.create_order(
-        default_instrument_id,
-        quantity=0.01,
-        side="buy",
-        type_="market",
-        strategy_id = max_len_strategy_id
-    )
-    sleep(MID_BREAK)
-    all_positions = tl.get_all_positions()
-    final_orders_1D = tl.get_all_orders(history=True, lookback_period="1D")
-    assert order_id in final_orders_1D["id"].values
-    position_id = position_id_from_order_id(order_id, final_orders_1D)
-    assert position_id in all_positions["id"].values
-
-    assert all_positions[all_positions["id"] == position_id]["strategyId"].values[0] == max_len_strategy_id
-
-    # try creating an order where strategy_id is longer than _MAX_STRATEGY_ID_LEN
-    with pytest.raises(ValueError):
-        too_long_strategy_id = "b" * (tl._MAX_STRATEGY_ID_LEN + 1)
-        tl.create_order(
-            default_instrument_id,
-            quantity=0.01,
-            side="buy",
-            price=0.01,
-            type_="limit",
-            validity="GTC",
-            strategy_id = too_long_strategy_id
-        )
-
-    # delete all orders
-    tl.delete_all_orders()
-
 
 def test_delete_all_orders():
     tl.delete_all_orders()
@@ -1217,3 +1191,69 @@ def test_delete_all_orders():
 
     assert len(orders_final) == len(orders_before)
     assert len(oh_final) == len(orders_history_before) + 4
+
+
+def random_string(length: int) -> str:
+    # randomly generate a strategy_id with length 5 * _MAX_STRATEGY_ID_LEN
+    return "".join(random.choices(string.ascii_lowercase, k=length))
+
+def test_ok_strategy_id():
+    run_strategy_id_test(random_string(tl._MAX_STRATEGY_ID_LEN - 5))
+
+def test_exact_len_strategy_id():
+    run_strategy_id_test(random_string(tl._MAX_STRATEGY_ID_LEN))
+
+def test_plus_one_len_strategy_id():
+    run_strategy_id_test(random_string(tl._MAX_STRATEGY_ID_LEN + 1))
+    
+def test_super_long_strategy_id():
+    run_strategy_id_test(random_string(5 * tl._MAX_STRATEGY_ID_LEN ))
+
+def run_strategy_id_test(long_strategy_id: str):
+    """Disable strategy_id length checks, create a limit and market order, check that strategyId shows in /orders /ordersHistory and /positions
+    1) create a market order, check that strategy id works /ordersHistory and /positions
+    2) create a limit order, chech that /orders workswell with a too-long strategy_id
+    """
+
+    # 1) market order
+    long_market_order_id = tl.create_order(
+        default_instrument_id,
+        quantity=0.01,
+        side="buy",
+        type_="market",
+        strategy_id = long_strategy_id,
+        _ignore_len_check = True
+    )
+    sleep(MID_BREAK)
+
+    all_market_orders_long = tl.get_all_orders(history=True)
+    all_positions_long = tl.get_all_positions()
+    assert long_strategy_id in all_market_orders_long["strategyId"].values
+
+    assert long_market_order_id in all_market_orders_long["id"].values
+    assert all_market_orders_long[all_market_orders_long["id"] == long_market_order_id]["strategyId"].values[0] == long_strategy_id
+
+    position_id = position_id_from_order_id(long_market_order_id, all_market_orders_long)
+    assert position_id in all_positions_long["id"].values
+    assert all_positions_long[all_positions_long["id"] == position_id]["strategyId"].values[0] == long_strategy_id
+ 
+
+    # 2) limit order
+    limit_long_strategy_id = f"limit_{long_strategy_id}"
+    long_market_order_id = tl.create_order(
+        default_instrument_id,
+        quantity=0.01,
+        price = 0.01,
+        side="buy",
+        type_="limit",
+        validity = "GTC",
+        strategy_id = limit_long_strategy_id,
+        _ignore_len_check = True
+    )
+    sleep(MID_BREAK)
+    all_orders_long = tl.get_all_orders(history=False)
+    assert long_market_order_id in all_orders_long["id"].values
+    assert all_orders_long[all_orders_long["id"] == long_market_order_id]["strategyId"].values[0] == limit_long_strategy_id
+
+    tl.delete_all_orders()
+    tl.close_all_positions()

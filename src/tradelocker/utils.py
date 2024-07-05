@@ -1,8 +1,8 @@
 from functools import wraps
-from typing import Any, Callable, Tuple, TypeVar, cast
+from typing import Any, Callable, Optional, Tuple, TypeVar, cast
 import datetime
+import logging as logging_module
 import time
-import logging
 import os
 
 from dotenv import dotenv_values
@@ -17,11 +17,11 @@ RT = TypeVar("RT")  # Return Type
 # ----------- Import conditional dependencies ---------------
 try:
     # Try importing typechecked from typeguard
-    logging.info("typechecked imported from typeguard")
+    logging_module.info("typechecked imported from typeguard")
     from typeguard import typechecked as tl_typechecked
 
 except ImportError:
-    logging.info("typechecked defined as a noop decatorator")
+    logging_module.info("typechecked defined as a noop decatorator")
 
     # If it fails, define a noop decorator
     def tl_typechecked(func: Callable[..., RT]) -> Callable[..., RT]:
@@ -50,6 +50,26 @@ RESOLUTION_COEFF_MS = {
     "Y": 365 * 24 * 60 * 60 * MS_COEFF,
 }
 
+# Default logging if setup_utils_logging was not called
+logging = logging_module
+
+# Overwrites the logging module
+def setup_utils_logging(logger: logging_module.Logger) -> None:
+    global logging
+    logging = logger
+
+
+def get_logger(name: str, log_level: LogLevelType, format: str) -> logging_module.Logger:
+    """Returns a logger with the specified name, log_level and format."""
+    logger = logging_module.getLogger(name)
+    logger.setLevel(log_level.upper())
+    # NOTE: this is needed to avoid duplicate logs for some reason?!
+    # https://stackoverflow.com/questions/6729268/log-messages-appearing-twice-with-python-logging
+    logger.propagate = False
+    handler = logging_module.StreamHandler()
+    handler.setFormatter(logging_module.Formatter(format))
+    logger.addHandler(handler)
+    return logger
 
 
 # This decorator logs the function call and its arguments
