@@ -1394,7 +1394,7 @@ class TLAPI:
             raise ValueError(error_msg)
 
         if stop_loss and not stop_loss_type:
-            error_msg = "Stop loss value specified, but no stop loss type. Continuing with 'absolute'"
+            error_msg = "Stop loss value specified, but no stop_loss_type specified. Please set stop_loss_type to 'absolute' or 'offset'"
             self.log.error(error_msg)
             raise ValueError(error_msg)
 
