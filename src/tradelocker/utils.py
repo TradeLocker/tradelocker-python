@@ -8,7 +8,7 @@ import os
 from dotenv import dotenv_values
 import jwt
 
-from .types import ResolutionType, LogLevelType
+from tradelocker.types import ResolutionType, LogLevelType
 
 # This will allow us to keep track of the return type of the functions
 # being decorated.
@@ -53,6 +53,7 @@ RESOLUTION_COEFF_MS = {
 # Default logging if setup_utils_logging was not called
 logging = logging_module
 
+
 # Overwrites the logging module
 def setup_utils_logging(logger: logging_module.Logger) -> None:
     global logging
@@ -66,9 +67,11 @@ def get_logger(name: str, log_level: LogLevelType, format: str) -> logging_modul
     # NOTE: this is needed to avoid duplicate logs for some reason?!
     # https://stackoverflow.com/questions/6729268/log-messages-appearing-twice-with-python-logging
     logger.propagate = False
-    handler = logging_module.StreamHandler()
-    handler.setFormatter(logging_module.Formatter(format))
-    logger.addHandler(handler)
+    # add handler only once
+    if len(logger.handlers) == 0:
+        handler = logging_module.StreamHandler()
+        handler.setFormatter(logging_module.Formatter(format))
+        logger.addHandler(handler)
     return logger
 
 
@@ -125,9 +128,7 @@ def get_nested_key(
     for key in keys:
         if key not in current_data:
             logging.error(f"Key {key} ({keys}) missing from JSON data {str(json_data)}")
-            raise KeyError(
-                f"Key {key} ({keys}) missing from JSON data {str(json_data)}"
-            )
+            raise KeyError(f"Key {key} ({keys}) missing from JSON data {str(json_data)}")
 
         current_data = current_data[key]
 
@@ -153,14 +154,29 @@ def timestamps_from_lookback(lookback_period: str) -> Tuple[int, int]:
 
     end_timestamp = int(datetime.datetime.now().timestamp() * MS_COEFF)
     # Depending on the lookback_period, we need to calculate the start_timestamp
-    start_timestamp = (
-        end_timestamp - lookback_period_num * RESOLUTION_COEFF_MS[lookback_period[-1]]
-    )
+    start_timestamp = end_timestamp - lookback_period_num * RESOLUTION_COEFF_MS[lookback_period[-1]]
 
     logging.debug(f"start_timestamp: {start_timestamp}")
     logging.debug(f"end_timestamp: {end_timestamp}")
 
     return start_timestamp, end_timestamp
+
+
+def convert_resolution_to_mins(resolution: ResolutionType) -> int:
+    # if last character is "m", then it is minutes, "H" is for hours, "D" for days, W weeks, M monthts
+
+    logging.debug(f"Converting {resolution} to minutes")
+
+    if resolution[-1] in RESOLUTION_COEFF_MS:
+        val = int(resolution[:-1])
+        val_ms = val * RESOLUTION_COEFF_MS[resolution[-1]]
+        if val_ms < 60 * 1000:
+            raise ValueError(f"Resolution {resolution} is too small. Minimum is 1 minute.")
+        return_value = val_ms // (60 * 1000)
+        logging.debug(f"RETURNING {return_value}")
+        return return_value
+
+    raise ValueError(f"last character of {resolution[-1]} not among {RESOLUTION_COEFF_MS.keys()}")
 
 
 @tl_typechecked
@@ -175,9 +191,7 @@ def resolve_lookback_and_timestamps(
     if end_timestamp == 0:
         end_timestamp = int(datetime.datetime.now().timestamp() * MS_COEFF)
 
-    if lookback_period == "" and (
-        start_timestamp == 0 or start_timestamp > end_timestamp
-    ):
+    if lookback_period == "" and (start_timestamp == 0 or start_timestamp > end_timestamp):
         raise ValueError(
             "Neither lookback_period nor valid start_timestamp/end_timestamp provided."
         )
@@ -216,9 +230,7 @@ def time_to_token_expiry(access_token: str) -> float:
         return 0
 
     # No explicit need to verify the signature as there is a direct https connection between the client and the server
-    decoded_payload: dict[str, Any] = jwt.decode(
-        access_token, options={"verify_signature": False}
-    )
+    decoded_payload: dict[str, Any] = jwt.decode(access_token, options={"verify_signature": False})
     expiration_time: float = decoded_payload["exp"]
     remaining_time: float = expiration_time - datetime.datetime.now().timestamp()
     return remaining_time
@@ -227,8 +239,7 @@ def time_to_token_expiry(access_token: str) -> float:
 @tl_typechecked
 # Should be called with callers_file = __file__
 def load_env_config(callers_file: str, backup_env_file=".env") -> dict[str, str | int]:
-    """Load the .env file from the path defined in ENV_FILE_PATH or the backup_env_file, relative to current dir
-    """
+    """Load the .env file from the path defined in ENV_FILE_PATH or the backup_env_file, relative to current dir"""
 
     # Get the current script's directory
     script_dir = os.path.abspath(os.path.dirname(callers_file))

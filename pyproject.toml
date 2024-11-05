@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "tradelocker"
-version = "0.43.1"
+version = "0.49.0"
 description = "Python client for TradeLocker's Trading API"
 authors = ["TradeLocker <admin@tradelocker.com>"]
 license = "MIT"
@@ -37,10 +37,14 @@ black = "24.4.2"
 
 
 [tool.poe.tasks]
-test = "poetry run pytest -v --cov=tradelocker --cov-report term-missing"
 test_typing = "poetry run mypy src/tradelocker --strict"
 test_pylint = "poetry run pylint tradelocker"
 test_all = ["test", "test_typing", "test_pylint"]
+test = [
+  { cmd = "poetry run pip install typeguard" },
+  { cmd = 'pytest tests --junitxml=results.xml -v --disable-warnings "$PYTEST_FLAGS"' },
+]
+
 
 [tool.poetry_bumpversion.file."src/tradelocker/__about__.py"]
 search = '__version__ = "{current_version}"'

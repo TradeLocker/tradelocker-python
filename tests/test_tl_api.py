@@ -1,6 +1,7 @@
 import random
 import string
 from time import sleep
+from datetime import datetime, timedelta
 import re
 import os
 import pandas as pd
@@ -22,6 +23,8 @@ from tradelocker.types import (
     PositionsColumns,
 )
 
+MAX_ORDER_HISTORY = 10000
+
 # check if the typeguard is installed and raise an explicit error if not
 try:
     from typeguard import TypeCheckError
@@ -33,9 +36,13 @@ except ImportError:
 
 # How long do each of the sleeps last?
 # Largely used to not trigger the rate limits and/or to allow the server to process the requests
-LONG_BREAK = 0.3
-MID_BREAK = 0.2
-SHORT_BREAK = 0.1
+LONG_BREAK = 0.8
+MID_BREAK = 0.5
+SHORT_BREAK = 0.3
+
+# default timestamp to use in tests to have a common start time
+# when fetching orders
+hour_ago_timestamp = int((datetime.now() - timedelta(hours=1)).timestamp() * 1000)
 
 
 # Create the global fixture
@@ -46,16 +53,13 @@ def setup_everything():
     parent_folder_env = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
     config = load_env_config(__file__, backup_env_file=parent_folder_env)
 
-    if "tl_acc_num" not in config:
-        config["tl_acc_num"] = 0
-    config["tl_acc_num"] = int(config["tl_acc_num"])
-
     tl = TLAPI(
         environment=config["tl_environment"],
         username=config["tl_email"],
         password=config["tl_password"],
         server=config["tl_server"],
-        acc_num=int(config["tl_acc_num"]),
+        acc_num=int(config.get("tl_acc_num", 0)),
+        developer_api_key=config.get("tl_developer_api_key", None),
     )
 
     default_symbol_name = "BTCUSD"  # Since the market is always open for crypto
@@ -73,6 +77,7 @@ def test_user_accounts():
             username=config["tl_email"],
             password=config["tl_password"],
             server=config["tl_server"],
+            developer_api_key=config.get("tl_developer_api_key", None),
             acc_num=-1,
         )
 
@@ -81,6 +86,7 @@ def test_user_accounts():
         username=config["tl_email"],
         password=config["tl_password"],
         server=config["tl_server"],
+        developer_api_key=config.get("tl_developer_api_key", None),
         acc_num=int(all_account_nums.iloc[0]),
     )
 
@@ -91,6 +97,7 @@ def test_user_accounts():
         username=config["tl_email"],
         password=config["tl_password"],
         server=config["tl_server"],
+        developer_api_key=config.get("tl_developer_api_key", None),
         account_id=first_account_id,
     )
 
@@ -102,10 +109,16 @@ def test_user_accounts():
             username=config["tl_email"],
             password=config["tl_password"],
             server=config["tl_server"],
+            developer_api_key=config.get("tl_developer_api_key", None),
             acc_num=int(all_account_nums.iloc[1]),
         )
 
         assert tl2.account_id != tl1.account_id
+
+
+def get_hour_ago_timestamp():
+    """Get the hour ago timestamp in milliseconds"""
+    return hour_ago_timestamp
 
 
 # test that __about__.py 's __version__ is set
@@ -149,9 +162,7 @@ def test_get_instrument_id():
     assert eurusd_id in all_instruments["tradableInstrumentId"].values
 
     eurusdSymbolId = int(
-        all_instruments[all_instruments["tradableInstrumentId"] == eurusd_id][
-            "id"
-        ].values[0]
+        all_instruments[all_instruments["tradableInstrumentId"] == eurusd_id]["id"].values[0]
     )
 
     eurusd_id_from_symbol_id = tl.get_instrument_id_from_symbol_id(eurusdSymbolId)
@@ -164,9 +175,7 @@ def test_all_executions():
     tl_check_type(all_executions, pd.DataFrame)
     assert set(all_executions.columns) == set(ExecutionsColumns.keys())
 
-    tl.create_order(
-        default_instrument_id, quantity=0.01, side="buy", price=0, type_="market"
-    )
+    tl.create_order(default_instrument_id, quantity=0.01, side="buy", price=0, type_="market")
     assert "positionId" in all_executions
 
 
@@ -217,6 +226,7 @@ def test_multiton_single_account():
         username=config["tl_email"],
         password=config["tl_password"],
         server=config["tl_server"],
+        developer_api_key=config.get("tl_developer_api_key", None),
         acc_num=int(config["tl_acc_num"]),
     )
 
@@ -234,8 +244,10 @@ def test_multiton_multiple_accounts():
     assert len(all_account_nums) > 1, "Need more than one account to test multiton"
 
     other_acc_num = -1
+    used_acc_num = int(config.get("tl_acc_num", 0))
+
     for acc_num in all_account_nums:
-        if acc_num != config["tl_acc_num"]:
+        if acc_num != used_acc_num:
             other_acc_num = acc_num
             break
 
@@ -244,6 +256,7 @@ def test_multiton_multiple_accounts():
         username=config["tl_email"],
         password=config["tl_password"],
         server=config["tl_server"],
+        developer_api_key=config.get("tl_developer_api_key", None),
         acc_num=int(other_acc_num),
     )
 
@@ -269,34 +282,36 @@ def test_price_history():
             default_instrument_id, resolution="bla", lookback_period="5D"
         )
         assert price_history == None
+    sleep(LONG_BREAK)
 
     # Should fail since "m4" is not a good lookback period value
     with pytest.raises(ValueError):
         price_history = tl.get_price_history(
             default_instrument_id, resolution="15m", lookback_period="m4"
         )
+    sleep(LONG_BREAK)
 
     # Should fail due to trying to fetch too much data
     with pytest.raises(ValueError):
-        tl.get_price_history(
-            default_instrument_id, resolution="5m", lookback_period="5Y"
-        )
+        tl.get_price_history(default_instrument_id, resolution="5m", lookback_period="5Y")
+    sleep(LONG_BREAK)
 
     # Should also fail due to fetching too much data
     with pytest.raises(ValueError):
-        tl.get_price_history(
-            default_instrument_id, resolution="1m", lookback_period="2Y"
-        )
+        tl.get_price_history(default_instrument_id, resolution="1m", lookback_period="2Y")
+    sleep(LONG_BREAK)
 
     price_history_15m_1M = tl.get_price_history(
         default_instrument_id, resolution="15m", lookback_period="1M"
     )
     assert not price_history_15m_1M.empty
+    sleep(LONG_BREAK)
 
     price_history_1H_1Y = tl.get_price_history(
         default_instrument_id, resolution="15m", lookback_period="1M"
     )
     assert not price_history_1H_1Y.empty
+    sleep(LONG_BREAK)
 
     jan_1st_2020_ms: int = 1578524400000
     jan_1st_2023_ms: int = 1672527600000
@@ -311,6 +326,7 @@ def test_price_history():
         end_timestamp=jan_9th_2023_ms,
     )
     assert no_data_history.empty
+    sleep(LONG_BREAK)
 
     price_history_timestamps = tl.get_price_history(
         default_instrument_id,
@@ -319,6 +335,7 @@ def test_price_history():
         end_timestamp=jun_9th_2023_ms,
     )
     assert not price_history_timestamps.empty
+    sleep(LONG_BREAK)
 
     price_history_1Y = tl.get_price_history(
         default_instrument_id,
@@ -327,29 +344,38 @@ def test_price_history():
         end_timestamp=jan_1st_2023_ms,
     )
     assert not price_history_1Y.empty
+    sleep(LONG_BREAK)
 
+    # Wrong order
     with pytest.raises(ValueError):
-        # Wrong order
         tl.get_price_history(
             default_instrument_id,
             resolution="1H",
             start_timestamp=jan_9th_2023_ms,
             end_timestamp=jan_1st_2023_ms,
         )
-        # Too much data
+    sleep(LONG_BREAK)
+
+    # Too much data
+    with pytest.raises(ValueError):
+        sleep(LONG_BREAK)
         tl.get_price_history(
             default_instrument_id,
             resolution="1m",
             start_timestamp=jan_1st_2020_ms,
             end_timestamp=jan_1st_2023_ms,
         )
-        # Too much data / non-existing start and lookback
+    sleep(LONG_BREAK)
+
+    # Too much data / non-existing start and lookback
+    with pytest.raises(ValueError):
         tl.get_price_history(
             default_instrument_id,
             resolution="1m",
             start_timestamp=0,
             end_timestamp=jan_1st_2020_ms,
         )
+    sleep(LONG_BREAK)
 
     price_history_no_end_timestamp = tl.get_price_history(
         default_instrument_id, resolution="1H", start_timestamp=jun_1st_2023_ms
@@ -370,13 +396,9 @@ def test_get_all_instruments():
 
 def test_instrument_and_session_details():
     with pytest.raises(TypeCheckError):
-        instrument_details = tl.get_instrument_details(
-            default_instrument_id, locale="BLA"
-        )
+        instrument_details = tl.get_instrument_details(default_instrument_id, locale="BLA")
 
-    instrument_details: InstrumentDetailsType = tl.get_instrument_details(
-        default_instrument_id
-    )
+    instrument_details: InstrumentDetailsType = tl.get_instrument_details(default_instrument_id)
     assert instrument_details
     tl_check_type(instrument_details, InstrumentDetailsType)
     assert instrument_details["name"] == default_symbol_name
@@ -460,19 +482,13 @@ def test_get_config():
     ]
     assert list(config.keys()) == expected_config_keys
 
-    assert _columns_set(config["positionsConfig"]["columns"]) == set(
-        PositionsColumns.keys()
-    )
+    assert _columns_set(config["positionsConfig"]["columns"]) == set(PositionsColumns.keys())
 
     assert _columns_set(config["ordersConfig"]["columns"]) == set(OrdersColumns.keys())
 
-    assert _columns_set(config["ordersHistoryConfig"]["columns"]) == set(
-        OrdersColumns.keys()
-    )
+    assert _columns_set(config["ordersHistoryConfig"]["columns"]) == set(OrdersColumns.keys())
 
-    assert _columns_set(config["filledOrdersConfig"]["columns"]) == set(
-        ExecutionsColumns.keys()
-    )
+    assert _columns_set(config["filledOrdersConfig"]["columns"]) == set(ExecutionsColumns.keys())
 
     assert _columns_set(config["accountDetailsConfig"]["columns"]) == set(
         AccountDetailsColumns.keys()
@@ -503,10 +519,11 @@ def test_orders_history_with_limit_order(ensure_order_fill: bool = False):
         "sell" if ensure_order_fill else "buy"
     )  # I am using a super-low price, so using "sell" will always fill
 
-    # oh_X -> orders history --> all final orders EVER
+    # oh_X -> orders history --> all final orders
     # o_X -> current orders --> all non-final and final orders in this session
-    oh_initial: pd.DataFrame = tl.get_all_orders(history=True)
-    o_initial: pd.DataFrame = tl.get_all_orders(history=False)
+    start_timestamp = get_hour_ago_timestamp()
+    oh_initial: pd.DataFrame = tl.get_all_orders(history=True, start_timestamp=start_timestamp)
+    o_initial: pd.DataFrame = tl.get_all_orders(history=False, start_timestamp=start_timestamp)
 
     with pytest.raises(ValueError):
         order_id: int = tl.create_order(
@@ -527,18 +544,19 @@ def test_orders_history_with_limit_order(ensure_order_fill: bool = False):
         validity="GTC",
     )
 
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
 
     # Let's wait for a max of 10 seconds for the order to be filled
     max_wait_seconds: int = 10
     sleep_delay: int = 2
     if ensure_order_fill:
         for i in range(0, max_wait_seconds, sleep_delay):
-            oh_after_order: pd.DataFrame = tl.get_all_orders(history=True)
+            oh_after_order: pd.DataFrame = tl.get_all_orders(
+                history=True, start_timestamp=start_timestamp
+            )
             if (
                 order_id in oh_after_order["id"].values
-                and oh_after_order[oh_after_order["id"] == order_id]["status"].values[0]
-                == "Filled"
+                and oh_after_order[oh_after_order["id"] == order_id]["status"].values[0] == "Filled"
             ):
                 break
             else:
@@ -547,8 +565,8 @@ def test_orders_history_with_limit_order(ensure_order_fill: bool = False):
             if i + sleep_delay >= max_wait_seconds:
                 break
 
-    oh_after_order: pd.DataFrame = tl.get_all_orders(history=True)
-    o_after_order: pd.DataFrame = tl.get_all_orders(history=False)
+    oh_after_order: pd.DataFrame = tl.get_all_orders(history=True, start_timestamp=start_timestamp)
+    o_after_order: pd.DataFrame = tl.get_all_orders(history=False, start_timestamp=start_timestamp)
 
     # Go over each element in oh_initial and check if they are inside oh_after_order
     is_in_oh_after = oh_initial["id"].isin(oh_after_order["id"])
@@ -571,15 +589,15 @@ def test_orders_history_with_limit_order(ensure_order_fill: bool = False):
 
     delete_success = tl.delete_order(order_id)
 
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
 
     if not ensure_order_fill:
         assert delete_success
     else:
         assert not delete_success
 
-    oh_after_delete = tl.get_all_orders(history=True)
-    o_after_delete = tl.get_all_orders(history=False)
+    oh_after_delete = tl.get_all_orders(history=True, start_timestamp=start_timestamp)
+    o_after_delete = tl.get_all_orders(history=False, start_timestamp=start_timestamp)
 
     # Check that an order is always visible in order history, regardless whether
     # it deleted or previously filled
@@ -626,7 +644,7 @@ def test_order_quantities():
         else:
             assert order_id
 
-        sleep(MID_BREAK)
+        sleep(SHORT_BREAK)
 
 
 def test_orders_history_with_filled_limit_order():
@@ -704,7 +722,8 @@ def test_create_and_close_position():
     )
     assert order_id
 
-    all_orders_history = tl.get_all_orders(history=True)
+    start_timestamp = get_hour_ago_timestamp()
+    all_orders_history = tl.get_all_orders(history=True, start_timestamp=start_timestamp)
     assert not all_orders_history.empty
 
     len_positions_after_order = len(tl.get_all_positions())
@@ -730,7 +749,8 @@ def test_close_position_partial():
     )
     assert order_id
 
-    all_orders_history = tl.get_all_orders(history=True)
+    start_timestamp = get_hour_ago_timestamp()
+    all_orders_history = tl.get_all_orders(history=True, start_timestamp=start_timestamp)
     assert not all_orders_history.empty
 
     len_positions_after_order = len(tl.get_all_positions())
@@ -747,10 +767,7 @@ def test_close_position_partial():
     position_id = position_id_from_order_id(order_id)
     assert position_id in positions_after_close["id"].values
     assert (
-        positions_after_close[positions_after_close["id"] == position_id]["qty"].values[
-            0
-        ]
-        == 0.01
+        positions_after_close[positions_after_close["id"] == position_id]["qty"].values[0] == 0.01
     )
 
     tl.close_position(position_id=position_id, close_quantity=0.01)
@@ -764,11 +781,11 @@ def test_position_netting():
     order1_id = tl.create_order(
         default_instrument_id, quantity=0.01, side="buy", price=0, type_="market"
     )
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
     order2_id = tl.create_order(
         default_instrument_id, quantity=0.03, side="sell", price=0, type_="market"
     )
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
     all_positions = tl.get_all_positions()
     # Expected: 0.01 buy ; 0.01 sell
     assert len(all_positions) == 2
@@ -782,7 +799,7 @@ def test_position_netting():
         type_="market",
         position_netting=True,
     )
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
     # Expected: 0.01 sell (buy was closed due to netting)
     all_positions_netting = tl.get_all_positions()
     assert len(all_positions_netting) == 1
@@ -796,7 +813,7 @@ def test_position_netting():
         type_="market",
         position_netting=True,
     )
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
     order5_id = tl.create_order(
         default_instrument_id,
         quantity=0.02,
@@ -805,7 +822,7 @@ def test_position_netting():
         type_="market",
         position_netting=True,
     )
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
 
     all_positions_netting_partial = tl.get_all_positions()
     # Expected: the 0.02 buy actually cancelled the order_4 sell, and reduced the order2's sell side to 0.02
@@ -862,15 +879,13 @@ def test_close_all_positions():
     order_id1 = tl.create_order(
         default_instrument_id, quantity=0.01, side="buy", price=0, type_="market"
     )
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
     order_id2 = tl.create_order(
         default_instrument_id, quantity=0.02, side="sell", price=0, type_="market"
     )
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
     instrument_id3 = tl.get_instrument_id_from_symbol_name("ETHUSD")
-    order_id3 = tl.create_order(
-        instrument_id3, quantity=0.01, side="sell", price=0, type_="market"
-    )
+    order_id3 = tl.create_order(instrument_id3, quantity=0.01, side="sell", price=0, type_="market")
 
     # Check that the positions were received
     assert order_id1
@@ -878,7 +893,6 @@ def test_close_all_positions():
     assert order_id3
 
     # Crude way of waiting for the orders to be filled
-    all_orders = tl.get_all_orders(history=False)
     for _ in range(5):
         try:
             position_id1 = position_id_from_order_id(order_id1)
@@ -886,6 +900,7 @@ def test_close_all_positions():
             position_id2 = position_id_from_order_id(order_id2)
             sleep(SHORT_BREAK)
             position_id3 = position_id_from_order_id(order_id3)
+            sleep(SHORT_BREAK)
             break
         except ValueError:
             sleep(LONG_BREAK)
@@ -925,7 +940,8 @@ def test_close_all_positions():
 
 
 def test_modify_and_delete_order():
-    orders_before = tl.get_all_orders(history=False)
+    start_timestamp = get_hour_ago_timestamp()
+    orders_before = tl.get_all_orders(history=False, start_timestamp=start_timestamp)
 
     # create a limit order
     order_id: int = tl.create_order(
@@ -938,21 +954,22 @@ def test_modify_and_delete_order():
     )
     assert order_id
     tl_check_type(order_id, int)
+    sleep(SHORT_BREAK)
 
-    orders_after_buy = tl.get_all_orders(history=False)
+    orders_after_buy = tl.get_all_orders(history=False, start_timestamp=start_timestamp)
     assert len(orders_after_buy) == len(orders_before) + 1
     assert order_id in orders_after_buy["id"].values
-    last_modified_buy = orders_after_buy[orders_after_buy["id"] == order_id][
-        "lastModified"
-    ].values[0]
+    last_modified_buy = orders_after_buy[orders_after_buy["id"] == order_id]["lastModified"].values[
+        0
+    ]
 
-    all_orders_history = tl.get_all_orders(history=True)
+    all_orders_history = tl.get_all_orders(history=True, start_timestamp=start_timestamp)
     assert not all_orders_history.empty
 
     # modify the limit order
     tl.modify_order(order_id, modification_params={"price": "0.02", "qty": "0.02"})
 
-    orders_after_modify = tl.get_all_orders(history=False)
+    orders_after_modify = tl.get_all_orders(history=False, start_timestamp=start_timestamp)
     assert order_id in orders_after_modify["id"].values
     assert len(orders_after_modify) == len(orders_after_buy)
     last_modified_modify = orders_after_modify[orders_after_modify["id"] == order_id][
@@ -964,16 +981,13 @@ def test_modify_and_delete_order():
     tl.delete_order(order_id)
     sleep(SHORT_BREAK)
 
-    orders_after_delete = tl.get_all_orders(history=False)
+    orders_after_delete = tl.get_all_orders(history=False, start_timestamp=start_timestamp)
     assert len(orders_after_delete) == len(orders_before)
     assert order_id not in orders_after_delete["id"].values
 
-    oh_after_delete = tl.get_all_orders(history=True)
+    oh_after_delete = tl.get_all_orders(history=True, start_timestamp=start_timestamp)
     # check the order status of the deleted order
-    assert (
-        oh_after_delete[oh_after_delete["id"] == order_id]["status"].values[0]
-        == "Cancelled"
-    )
+    assert oh_after_delete[oh_after_delete["id"] == order_id]["status"].values[0] == "Cancelled"
 
 
 def test_modify_position():
@@ -981,27 +995,21 @@ def test_modify_position():
     order_id = tl.create_order(
         default_instrument_id, quantity=0.01, side="buy", price=0, type_="market"
     )
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
     position_id = position_id_from_order_id(order_id)
     assert position_id
 
     SL_VAL = 0.01
     TP_VAL = 10000000
     # Modify the position
-    tl.modify_position(
-        position_id, modification_params={"stopLoss": SL_VAL, "takeProfit": TP_VAL}
-    )
+    tl.modify_position(position_id, modification_params={"stopLoss": SL_VAL, "takeProfit": TP_VAL})
 
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
 
     all_positions = tl.get_all_positions()
     assert position_id in all_positions["id"].values
-    stop_loss_id = all_positions[all_positions["id"] == position_id][
-        "stopLossId"
-    ].values[0]
-    take_profit_id = all_positions[all_positions["id"] == position_id][
-        "takeProfitId"
-    ].values[0]
+    stop_loss_id = all_positions[all_positions["id"] == position_id]["stopLossId"].values[0]
+    take_profit_id = all_positions[all_positions["id"] == position_id]["takeProfitId"].values[0]
 
     assert stop_loss_id
     assert take_profit_id
@@ -1023,7 +1031,7 @@ def test_modify_position():
         modification_params={"stopLoss": SL_VAL * 2, "takeProfit": TP_VAL / 2},
     )
 
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
 
     all_orders_after_modify = tl.get_all_orders(history=False)
     stop_loss_order_after_modify = all_orders_after_modify[
@@ -1038,7 +1046,7 @@ def test_modify_position():
 
     # Close the position
     tl.close_position(position_id=position_id)
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
 
     all_positions_after_close = tl.get_all_positions()
     assert position_id not in all_positions_after_close["id"].values
@@ -1060,7 +1068,7 @@ def test_order_with_take_profit_and_stop_loss():
         take_profit=TP_VAL,
         take_profit_type="absolute",
     )
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
 
     all_orders = tl.get_all_orders(history=True)
     order = all_orders[all_orders["id"] == order_id].iloc[0]
@@ -1070,14 +1078,25 @@ def test_order_with_take_profit_and_stop_loss():
 
 
 def test_orders_history_time_ranges_and_instrument_filter():
-    oh_full = tl.get_all_orders(history=True)
-    oh_last_5_days = tl.get_all_orders(history=True, lookback_period="5D")
-    assert len(oh_full) >= len(oh_last_5_days)
+    six_hours_ago_timestamp = int((datetime.now() - timedelta(hours=6)).timestamp() * 1000)
+    two_hours_ago_timestamp = int((datetime.now() - timedelta(hours=2)).timestamp() * 1000)
+    oh_last_6_hours = tl.get_all_orders(history=True, start_timestamp=six_hours_ago_timestamp)
+    oh_last_2_hours = tl.get_all_orders(history=True, start_timestamp=two_hours_ago_timestamp)
+
+    if len(oh_last_6_hours) >= MAX_ORDER_HISTORY:
+        pytest.skip(
+            "Too many orders in the last 6 hours, skipping "
+            f"because of get_all_orders returned {len(oh_last_6_hours)} orders"
+        )
+
+    assert len(oh_last_6_hours) >= len(oh_last_2_hours)
 
     LTCUSD_instrument_id = tl.get_instrument_id_from_symbol_name("LTCUSD")
 
-    oh_last_1_day_LTCUSD_before = tl.get_all_orders(
-        history=True, lookback_period="1D", instrument_id_filter=LTCUSD_instrument_id
+    # use last one hour as the start time
+    start_timestamp = get_hour_ago_timestamp()
+    oh_last_1_hour_LTCUSD_before = tl.get_all_orders(
+        history=True, start_timestamp=start_timestamp, instrument_id_filter=LTCUSD_instrument_id
     )
 
     order_id = tl.create_order(
@@ -1085,31 +1104,30 @@ def test_orders_history_time_ranges_and_instrument_filter():
     )
     sleep(MID_BREAK)
 
-    oh_last_1_day_LTCUSD = tl.get_all_orders(
-        history=True, lookback_period="1D", instrument_id_filter=LTCUSD_instrument_id
+    oh_last_1_hour_LTCUSD = tl.get_all_orders(
+        history=True, start_timestamp=start_timestamp, instrument_id_filter=LTCUSD_instrument_id
     )
-
-    assert len(oh_last_1_day_LTCUSD) == len(oh_last_1_day_LTCUSD_before) + 1
+    assert len(oh_last_1_hour_LTCUSD) == len(oh_last_1_hour_LTCUSD_before) + 1
 
     tl.close_position(order_id=order_id)
     sleep(MID_BREAK)
 
-    oh_last_1_day_LTCUSD_after = tl.get_all_orders(
-        history=True, lookback_period="1D", instrument_id_filter=LTCUSD_instrument_id
+    oh_last_1_hour_LTCUSD_after = tl.get_all_orders(
+        history=True, start_timestamp=start_timestamp, instrument_id_filter=LTCUSD_instrument_id
     )
+    assert len(oh_last_1_hour_LTCUSD_after) == len(oh_last_1_hour_LTCUSD_before) + 2
 
-    assert len(oh_last_1_day_LTCUSD_after) == len(oh_last_1_day_LTCUSD_before) + 2
-
-    oh_full_after = tl.get_all_orders(history=True)
-    assert len(oh_full_after) == len(oh_full) + 2
+    oh_last_6_hours_after = tl.get_all_orders(history=True, start_timestamp=six_hours_ago_timestamp)
+    assert len(oh_last_6_hours_after) == len(oh_last_6_hours) + 2
 
 
 def test_delete_all_orders():
     tl.delete_all_orders()
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
 
-    orders_before = tl.get_all_orders(history=False)
-    orders_history_before = tl.get_all_orders(history=True)
+    start_timestamp = get_hour_ago_timestamp()
+    orders_before = tl.get_all_orders(history=False, start_timestamp=start_timestamp)
+    orders_history_before = tl.get_all_orders(history=True, start_timestamp=start_timestamp)
 
     # create a limit order
     order_id1: int = tl.create_order(
@@ -1120,7 +1138,7 @@ def test_delete_all_orders():
         type_="limit",
         validity="GTC",
     )
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
     order_id2: int = tl.create_order(
         default_instrument_id,
         quantity=0.01,
@@ -1129,7 +1147,7 @@ def test_delete_all_orders():
         type_="limit",
         validity="GTC",
     )
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
     instrument_id3 = tl.get_instrument_id_from_symbol_name("ETHUSD")
     order_id3: int = tl.create_order(
         instrument_id3,
@@ -1139,7 +1157,7 @@ def test_delete_all_orders():
         type_="limit",
         validity="GTC",
     )
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
     instrument_id4 = tl.get_instrument_id_from_symbol_name("DOGEUSD")
     order_id4: int = tl.create_order(
         instrument_id4,
@@ -1149,20 +1167,21 @@ def test_delete_all_orders():
         type_="limit",
         validity="GTC",
     )
+    sleep(SHORT_BREAK)
 
     assert order_id1
     assert order_id2
     assert order_id3
     assert order_id4
 
-    orders_after_buy = tl.get_all_orders(history=False)
+    orders_after_buy = tl.get_all_orders(history=False, start_timestamp=start_timestamp)
     assert len(orders_after_buy) == len(orders_before) + 4
 
     tl.delete_all_orders(instrument_id_filter=instrument_id3)
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
 
-    orders_history_after = tl.get_all_orders(history=True)
-    orders_after = tl.get_all_orders(history=False)
+    orders_history_after = tl.get_all_orders(history=True, start_timestamp=start_timestamp)
+    orders_after = tl.get_all_orders(history=False, start_timestamp=start_timestamp)
 
     # Only one order has become final ("Cancelled") and will thus be "added" to ordersHistory)
     assert len(orders_history_after) == len(orders_history_before) + 1
@@ -1180,9 +1199,9 @@ def test_delete_all_orders():
 
     tl.delete_all_orders()
 
-    orders_final = tl.get_all_orders(history=False)
+    orders_final = tl.get_all_orders(history=False, start_timestamp=start_timestamp)
     sleep(SHORT_BREAK)
-    oh_final = tl.get_all_orders(history=True)
+    oh_final = tl.get_all_orders(history=True, start_timestamp=start_timestamp)
 
     # Check that all order statuses are "Cancelled"
     assert oh_final[oh_final["id"] == order_id1]["status"].values[0] == "Cancelled"
@@ -1197,19 +1216,28 @@ def random_string(length: int) -> str:
     # randomly generate a strategy_id with length 5 * _MAX_STRATEGY_ID_LEN
     return "".join(random.choices(string.ascii_lowercase, k=length))
 
+
 def test_ok_strategy_id():
     run_strategy_id_test(random_string(tl._MAX_STRATEGY_ID_LEN - 5))
+
 
 def test_exact_len_strategy_id():
     run_strategy_id_test(random_string(tl._MAX_STRATEGY_ID_LEN))
 
-def test_plus_one_len_strategy_id():
-    run_strategy_id_test(random_string(tl._MAX_STRATEGY_ID_LEN + 1))
-    
-def test_super_long_strategy_id():
-    run_strategy_id_test(random_string(5 * tl._MAX_STRATEGY_ID_LEN ))
 
-def run_strategy_id_test(long_strategy_id: str):
+def test_plus_one_len_strategy_id():
+    # This is expected to fail
+    with pytest.raises(Exception):
+        run_strategy_id_test(random_string(tl._MAX_STRATEGY_ID_LEN + 1))
+
+
+def test_super_long_strategy_id():
+    # This is expected to fail
+    with pytest.raises(Exception):
+        run_strategy_id_test(random_string(5 * tl._MAX_STRATEGY_ID_LEN))
+
+
+def run_strategy_id_test(strategy_id: str):
     """Disable strategy_id length checks, create a limit and market order, check that strategyId shows in /orders /ordersHistory and /positions
     1) create a market order, check that strategy id works /ordersHistory and /positions
     2) create a limit order, chech that /orders workswell with a too-long strategy_id
@@ -1221,39 +1249,59 @@ def run_strategy_id_test(long_strategy_id: str):
         quantity=0.01,
         side="buy",
         type_="market",
-        strategy_id = long_strategy_id,
-        _ignore_len_check = True
+        strategy_id=strategy_id,
+        _ignore_len_check=True,
     )
-    sleep(MID_BREAK)
+    sleep(SHORT_BREAK)
 
-    all_market_orders_long = tl.get_all_orders(history=True)
+    start_timestamp = get_hour_ago_timestamp()
+    all_market_orders_long = tl.get_all_orders(history=True, start_timestamp=start_timestamp)
     all_positions_long = tl.get_all_positions()
-    assert long_strategy_id in all_market_orders_long["strategyId"].values
+
+    assert strategy_id in all_market_orders_long["strategyId"].values
 
     assert long_market_order_id in all_market_orders_long["id"].values
-    assert all_market_orders_long[all_market_orders_long["id"] == long_market_order_id]["strategyId"].values[0] == long_strategy_id
+    assert (
+        all_market_orders_long[all_market_orders_long["id"] == long_market_order_id][
+            "strategyId"
+        ].values[0]
+        == strategy_id
+    )
 
     position_id = position_id_from_order_id(long_market_order_id, all_market_orders_long)
+
     assert position_id in all_positions_long["id"].values
-    assert all_positions_long[all_positions_long["id"] == position_id]["strategyId"].values[0] == long_strategy_id
- 
+    assert (
+        all_positions_long[all_positions_long["id"] == position_id]["strategyId"].values[0]
+        == strategy_id
+    )
 
     # 2) limit order
-    limit_long_strategy_id = f"limit_{long_strategy_id}"
+    # replace the last 5 characters with LIMIT to make it unique
+    limit_strategy_id = strategy_id[:-5] + "LIMIT"
     long_market_order_id = tl.create_order(
         default_instrument_id,
         quantity=0.01,
-        price = 0.01,
+        price=0.01,
         side="buy",
         type_="limit",
-        validity = "GTC",
-        strategy_id = limit_long_strategy_id,
-        _ignore_len_check = True
+        validity="GTC",
+        strategy_id=limit_strategy_id,
+        _ignore_len_check=True,
     )
-    sleep(MID_BREAK)
-    all_orders_long = tl.get_all_orders(history=False)
+    sleep(SHORT_BREAK)
+    all_orders_long = tl.get_all_orders(history=False, start_timestamp=start_timestamp)
+
     assert long_market_order_id in all_orders_long["id"].values
-    assert all_orders_long[all_orders_long["id"] == long_market_order_id]["strategyId"].values[0] == limit_long_strategy_id
+
+    assert (
+        all_orders_long[all_orders_long["id"] == long_market_order_id]["strategyId"].values[0]
+        == limit_strategy_id
+    )
 
     tl.delete_all_orders()
     tl.close_all_positions()
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

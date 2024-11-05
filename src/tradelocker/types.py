@@ -16,9 +16,7 @@ SessionType: TA = dict[str, str | list[dict[str, str]]]
 SideType: TA = Literal["buy", "sell"]
 SessionHolidayType: TA = dict[str, Optional[str | None]]
 JSONType: TA = dict[str, object]
-SessionDetailsType: TA = dict[
-    str, str | bool | None | list[SessionHolidayType] | SessionType
-]
+SessionDetailsType: TA = dict[str, str | bool | None | list[SessionHolidayType] | SessionType]
 SessionStatusDetailsType: TA = dict[
     Literal["allowedOperations", "allowedOrderTypes"], list[Literal[0, 1]]
 ]
@@ -76,9 +74,7 @@ ConfigType: TA = (
 )
 
 ResolutionType: TA = Literal["1M", "1W", "1D", "4H", "1H", "30m", "15m", "5m", "1m"]
-ModificationParamsType: TA = dict[
-    str, str | float | StopLossType | TakeProfitType | ValidityType
-]
+ModificationParamsType: TA = dict[str, str | float | StopLossType | TakeProfitType | ValidityType]
 LocaleType: TA = Literal[
     "ar", "en", "es", "fr", "ja", "ko", "pl", "pt", "ru", "tr", "ua", "zh_sm", "zh_tr"
 ]
@@ -86,7 +82,7 @@ EnvironmentsType: TA = Literal["demo", "live"]
 DevEnvironmentsType: TA = Literal["dev", "stg", "exp"]  # For internal use
 RouteType: TA = dict[Literal["id", "type"], int | str]
 RouteTypeType: TA = Literal["INFO", "TRADE"]
-LogLevelType: TA = Literal["debug", "info", "warning", "error", "critical"]
+LogLevelType: TA = Literal["debug", "info", "warning", "error", "critical", "notset"]
 DictValuesType: TA = dict[str, str | float | int]
 CredentialsType: TA = dict[Literal["username", "password", "server"], str]
 QuotesKeyType: TA = Literal["ap", "bp", "as", "bs"]
