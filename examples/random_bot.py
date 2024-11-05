@@ -52,21 +52,15 @@ class RandomTradingBot:
                     # Randomly decide to buy or sell
                     if random.choice([True, False]):
                         print("Buy decision.")
-                        order_id = self.tlAPI.create_order(
-                            instrument_id, position_size, "buy"
-                        )
+                        order_id = self.tlAPI.create_order(instrument_id, position_size, "buy")
                     else:
                         print("Sell decision.")
-                        order_id = self.tlAPI.create_order(
-                            instrument_id, position_size, "sell"
-                        )
+                        order_id = self.tlAPI.create_order(instrument_id, position_size, "sell")
 
                     holding_time = self.sleep_time
 
                     # Sleep for the chosen delay
-                    print(
-                        f"Keeping the position for the next {holding_time} seconds..."
-                    )
+                    print(f"Keeping the position for the next {holding_time} seconds...")
                     time.sleep(holding_time)
 
                     # Close the position
@@ -96,9 +90,7 @@ if __name__ == "__main__":
         log_level="debug",
     )
 
-    bot = RandomTradingBot(
-        tlAPI, 0.5, 5, tlAPI.get_instrument_id_from_symbol_name("BTCUSD")
-    )
+    bot = RandomTradingBot(tlAPI, 0.5, 5, tlAPI.get_instrument_id_from_symbol_name("BTCUSD"))
 
     # Run the bot
     bot.run()

@@ -21,6 +21,7 @@
 /dist
 /tests/.pytest_cache
 /venv
+results.xml
 __pycache__
 _prompt-*
 _response-*

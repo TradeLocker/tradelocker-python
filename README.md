@@ -7,6 +7,7 @@ A full description of the TradeLocker's public API can be found at [TradeLocker 
 ---
 
 ## Table of Contents
+
 1. [Getting Started](#getting-started)
 2. [Installation](#installation)
 3. [Usage](#usage)
@@ -65,6 +66,7 @@ For more detailed examples, see the `examples` directory.
 To contribute to the development of this project, please create an issue, or a pull request.
 
 Steps to create a pull request:
+
 1. Clone the project.
 2. Create your feature branch (`git checkout -b feature/YourFeature`).
 3. Commit your changes (`git commit -am 'Add some feature'`).
