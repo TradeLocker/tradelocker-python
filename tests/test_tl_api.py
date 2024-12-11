@@ -7,6 +7,7 @@ import os
 import pandas as pd
 import pytest
 from typing import Literal, Optional
+from tradelocker.tradelocker_api import TLAPIException, TLAPIOrderException
 from tradelocker.utils import load_env_config, tl_check_type
 from tradelocker import TLAPI
 from tradelocker.types import (
@@ -630,14 +631,18 @@ def test_order_quantities():
         -0.05: True,
     }
     for qty, should_fail in qts_to_test.items():
-        order_id: int = tl.create_order(
-            default_instrument_id,
-            quantity=qty,
-            side="buy",
-            price=0.01,
-            type_="limit",
-            validity="GTC",
-        )
+        order_id: Optional[int] = None
+        try:
+            order_id = tl.create_order(
+                default_instrument_id,
+                quantity=qty,
+                side="buy",
+                price=0.01,
+                type_="limit",
+                validity="GTC",
+            )
+        except TLAPIOrderException:
+            order_id = None
 
         if should_fail:
             assert order_id == None
@@ -1227,13 +1232,13 @@ def test_exact_len_strategy_id():
 
 def test_plus_one_len_strategy_id():
     # This is expected to fail
-    with pytest.raises(Exception):
+    with pytest.raises(TLAPIException):
         run_strategy_id_test(random_string(tl._MAX_STRATEGY_ID_LEN + 1))
 
 
 def test_super_long_strategy_id():
     # This is expected to fail
-    with pytest.raises(Exception):
+    with pytest.raises(TLAPIException):
         run_strategy_id_test(random_string(5 * tl._MAX_STRATEGY_ID_LEN))
 
 
