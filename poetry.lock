@@ -310,6 +310,17 @@ files = [
 colors = ["colorama (>=0.4.6)"]
 
 [[package]]
+name = "joblib"
+version = "1.4.2"
+description = "Lightweight pipelining with Python functions"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "joblib-1.4.2-py3-none-any.whl", hash = "sha256:06d478d5674cbc267e7496a410ee875abd68e4340feff4490bcb7afb88060ae6"},
+    {file = "joblib-1.4.2.tar.gz", hash = "sha256:2382c5816b2636fbd20a09e0f4e9dad4736765fdfb7dca582943b9c1366b3f0e"},
+]
+
+[[package]]
 name = "lazy-object-proxy"
 version = "1.10.0"
 description = "A fast and thorough lazy object proxy."
@@ -963,4 +974,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11"
-content-hash = "65e09ae7f35bbe40997ad27af99d5b6d8a17b9f666f892d48fa02c215c847d39"
+content-hash = "64af1c2d1c2311bc03a804b2ff682bba255255121e6d533fbab56f13785563f8"

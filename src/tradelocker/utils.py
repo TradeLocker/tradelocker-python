@@ -1,5 +1,6 @@
-from functools import wraps
-from typing import Any, Callable, Optional, Tuple, TypeVar, cast
+from functools import wraps, lru_cache
+import inspect
+from typing import Any, Callable, TypeVar, cast
 import datetime
 import logging as logging_module
 import time
@@ -8,6 +9,7 @@ import os
 from dotenv import dotenv_values
 import jwt
 
+from requests.exceptions import RequestException
 from tradelocker.types import ResolutionType, LogLevelType
 
 # This will allow us to keep track of the return type of the functions
@@ -64,15 +66,17 @@ def get_logger(name: str, log_level: LogLevelType, format: str) -> logging_modul
     """Returns a logger with the specified name, log_level and format."""
     logger = logging_module.getLogger(name)
     logger.setLevel(log_level.upper())
-    # NOTE: this is needed to avoid duplicate logs for some reason?!
-    # https://stackoverflow.com/questions/6729268/log-messages-appearing-twice-with-python-logging
-    logger.propagate = False
     # add handler only once
     if len(logger.handlers) == 0:
         handler = logging_module.StreamHandler()
         handler.setFormatter(logging_module.Formatter(format))
         logger.addHandler(handler)
     return logger
+
+
+# Define the new method
+def always_return_true(*args, **kwargs):
+    return True
 
 
 # This decorator logs the function call and its arguments
@@ -101,20 +105,78 @@ def log_func(func: Callable[..., RT]) -> Callable[..., RT]:
     return cast(Callable[..., RT], wrapper)
 
 
+def has_parameter(func, param_name):
+    signature = inspect.signature(func)
+    return param_name in signature.parameters
+
+
+# Use disk_cache (joblib) if self._disk_cache is set, otherwise uses lru_cache
+def disk_or_memory_cache(cache_validation_callback=None):
+    def decorator(func):
+        # Get the original function signature
+        sig = inspect.signature(func)
+        # Create a new parameter for '_cache_key'
+        cache_key_param = inspect.Parameter(
+            "_cache_key", kind=inspect.Parameter.KEYWORD_ONLY, default=None
+        )
+        # Build a new signature with '_cache_key' added
+        new_params = [*sig.parameters.values(), cache_key_param]
+        new_sig = sig.replace(parameters=new_params)
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            cache_attr = f"__cached_{func.__name__}"
+            if len(args) == 0:
+                raise ValueError(
+                    "Decorator must be used with a class method. First argument must be 'self'"
+                )
+            self = args[0]
+
+            # Define a new function with the updated signature
+            @wraps(func)
+            def func_with_cache_key(*args, _cache_key=None, **kwargs):
+                return func(*args, **kwargs)
+
+            # Assign the new signature to the function
+            func_with_cache_key.__signature__ = new_sig
+            func_with_cache_key.__name__ = func.__name__ + "_with_cache_key"
+
+            if not hasattr(self, cache_attr):
+                if hasattr(self, "_disk_cache") and self._disk_cache is not None:
+                    cached_func_applied_self = self._disk_cache.cache(
+                        ignore=["self"], cache_validation_callback=cache_validation_callback
+                    )(func_with_cache_key)
+                    logging.debug(f"Creating disk cache for {func.__name__}")
+                else:
+                    cached_func_applied_self = lru_cache()(func_with_cache_key)
+                    logging.debug(f"Creating memory cache for {func.__name__}")
+
+                setattr(self, cache_attr, cached_func_applied_self)
+            else:
+                cached_func_applied_self = getattr(self, cache_attr)
+
+            # Add '_cache_key' to kwargs
+            kwargs["_cache_key"] = getattr(self, "_cache_key", None)
+            response = cached_func_applied_self(*args, **kwargs)
+            return response
+
+        return wrapper
+
+    return decorator
+
+
 def retry(func: Callable[..., RT], delay: float = 1) -> Callable[..., RT]:
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> RT:
-        last_err: Exception = Exception()
         max_retries = 3
+
         for attempt in range(max_retries):
             time.sleep(delay)  # Must be below delay limit
             try:
                 return func(*args, **kwargs)
-            except Exception as err:
+            except RequestException as err:
                 logging.warning(f"Retry #{attempt}, Error: {err}, retrying...")
-                last_err = err
-
-        raise Exception(f"Received error: {last_err}, too many times. Exiting...")
+        return func(*args, **kwargs)
 
     return cast(Callable[..., RT], wrapper)
 
@@ -127,7 +189,6 @@ def get_nested_key(
     current_data: Any = json_data
     for key in keys:
         if key not in current_data:
-            logging.error(f"Key {key} ({keys}) missing from JSON data {str(json_data)}")
             raise KeyError(f"Key {key} ({keys}) missing from JSON data {str(json_data)}")
 
         current_data = current_data[key]
@@ -140,7 +201,7 @@ def get_nested_key(
 
 
 @tl_typechecked
-def timestamps_from_lookback(lookback_period: str) -> Tuple[int, int]:
+def timestamps_from_lookback(lookback_period: str) -> tuple[int, int]:
     assert (
         len(lookback_period) > 1
     ), f"lookback_period ({lookback_period}) must be at least 2 characters long"
@@ -164,16 +225,13 @@ def timestamps_from_lookback(lookback_period: str) -> Tuple[int, int]:
 
 def convert_resolution_to_mins(resolution: ResolutionType) -> int:
     # if last character is "m", then it is minutes, "H" is for hours, "D" for days, W weeks, M monthts
-
-    logging.debug(f"Converting {resolution} to minutes")
-
     if resolution[-1] in RESOLUTION_COEFF_MS:
         val = int(resolution[:-1])
         val_ms = val * RESOLUTION_COEFF_MS[resolution[-1]]
         if val_ms < 60 * 1000:
             raise ValueError(f"Resolution {resolution} is too small. Minimum is 1 minute.")
         return_value = val_ms // (60 * 1000)
-        logging.debug(f"RETURNING {return_value}")
+        logging.debug(f"Converted {resolution} to minutes: {return_value}")
         return return_value
 
     raise ValueError(f"last character of {resolution[-1]} not among {RESOLUTION_COEFF_MS.keys()}")
@@ -182,35 +240,32 @@ def convert_resolution_to_mins(resolution: ResolutionType) -> int:
 @tl_typechecked
 def resolve_lookback_and_timestamps(
     lookback_period: str, start_timestamp: int, end_timestamp: int
-) -> Tuple[int, int]:
+) -> tuple[int, int]:
     """This assumes that either lookback_period or start timestamp is provided.
     lookback_period needs to be in the format of 1Y, 1M, 1D, 1H, 1m, 1s, where M = 30 days and Y = 365 days
     """
-
     # If end_timestamp is 0, we can assume that we want to get data until now
     if end_timestamp == 0:
         end_timestamp = int(datetime.datetime.now().timestamp() * MS_COEFF)
 
-    if lookback_period == "" and (start_timestamp == 0 or start_timestamp > end_timestamp):
-        raise ValueError(
-            "Neither lookback_period nor valid start_timestamp/end_timestamp provided."
-        )
-
-    if start_timestamp != 0 and end_timestamp != 0 and start_timestamp <= end_timestamp:
+    valid_timestamps = (
+        start_timestamp != 0 and end_timestamp != 0 and start_timestamp <= end_timestamp
+    )
+    if valid_timestamps:
+        if lookback_period != "":
+            logging.warning(
+                "Both lookback_period and start_timestamp/end_timestamp were provided.\n"
+                "Continuing with only the start_timestamp/end_timestamp."
+            )
         return start_timestamp, end_timestamp
 
     try:
-        start_timestamp, end_timestamp = timestamps_from_lookback(lookback_period)
-        logging.warning(
-            "Both valid lookback_period and start_timestamp/end_timestamp were provided.\n"
-            "Continuing with only the start_timestamp/end_timestamp"
-        )
-    except Exception as err:
-        logging.warning(
-            f"Invalid lookback_period provided: {err}\nContinuing with only the start_timestamp/end_timestamp"
-        )
-
-    return start_timestamp, end_timestamp
+        start_from_lookback, end_from_lookback = timestamps_from_lookback(lookback_period)
+        return start_from_lookback, end_from_lookback
+    except Exception as e:
+        raise ValueError(
+            "Neither lookback_period nor valid start_timestamp/end_timestamp provided."
+        ) from e
 
 
 @tl_typechecked

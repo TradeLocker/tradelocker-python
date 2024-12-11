@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "tradelocker"
-version = "0.49.1"
+version = "0.56.0"
 description = "Python client for TradeLocker's Trading API"
 authors = ["TradeLocker <admin@tradelocker.com>"]
 license = "MIT"
@@ -23,6 +23,7 @@ requests = "2.32.2"
 python-dotenv = "1.0.0"
 # typeguard is removed as being a dependency since it causes problems with pyinstaller and nuitka -- add it manually if you prefer to use it or if you want to run tests
 # typeguard = "4.1.5"
+joblib = "1.4.2"
 
 [tool.poetry.dev-dependencies]
 poethepoet = "0.26.1"
