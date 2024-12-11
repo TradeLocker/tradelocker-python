@@ -133,7 +133,7 @@ class TLAPI:
         log_level: LogLevelType = "debug",
         # If this is set, we will be using disk cache for several cachable requests
         disk_cache_location: Optional[str] = None,
-        release: str = "0.0.0",
+        release: Optional[str] = None,
     ) -> None:
         # Those object with _initialized tag have already been initialized,
         # so there is no need to re-initialize anything.
