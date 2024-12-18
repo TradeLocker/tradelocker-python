@@ -168,7 +168,7 @@ class TLAPI:
         self.log = get_logger(__name__, log_level=log_level, format=self._LOGGING_FORMAT)
         setup_utils_logging(self.log)
 
-        self.log.info(f"Initialized TLAPI with {log_level=} {self._LOGGING_FORMAT=} ")
+        self.log.debug(f"Initialized TLAPI with {log_level=} {self._LOGGING_FORMAT=} ")
 
         if self._credentials:
             self._auth_with_password(
@@ -1234,6 +1234,30 @@ class TLAPI:
     @disk_or_memory_cache()
     @log_func
     @tl_typechecked
+    def _request_history_cacheable(
+        self, instrument_id: int, route_id: str, resolution: ResolutionType, _from: int, to: int
+    ) -> JSONType:
+        """Performs a (cacheable) request to the specified URL and handles the response.
+
+        The get_price_history is not cacheable based on its parameters due to the lookback_period and end_timestamp,
+           which can cause the same function params to require a different answer.
+        This is a helper function for get_price_history, which does not have these params and is thus cacheable.
+        """
+        route_url = f"{self.get_base_url()}/trade/history"
+
+        additional_params = {
+            "tradableInstrumentId": instrument_id,
+            "routeId": route_id,
+            "resolution": resolution,
+            "from": _from,
+            "to": to,
+        }
+
+        response_json = self._request("get", route_url, additional_params=additional_params)
+        return response_json
+
+    @log_func
+    @tl_typechecked
     def get_price_history(
         self,
         instrument_id: int,
@@ -1272,15 +1296,13 @@ class TLAPI:
                 "Try splitting your request in smaller chunks."
             )
 
-        additional_params: DictValuesType = {
-            "tradableInstrumentId": instrument_id,
-            "routeId": self.get_info_route_id(instrument_id),
-            "resolution": resolution,
-            "from": start_timestamp,  # convert to milliseconds
-            "to": end_timestamp,
-        }
-
-        response_json = self._request("get", route_url, additional_params=additional_params)
+        response_json = self._request_history_cacheable(
+            instrument_id=instrument_id,
+            route_id=self.get_info_route_id(instrument_id),
+            resolution=resolution,
+            _from=start_timestamp,
+            to=end_timestamp,
+        )
 
         try:
             bar_details = pd.DataFrame(get_nested_key(response_json, ["d", "barDetails"]))
@@ -1442,6 +1464,7 @@ class TLAPI:
 
         Raises:
             ValueError: Will be raised if any of the parameters are invalid
+            TLAPIException: Will be raised if the request failed or no valid json received.
             TLAPIOrderException: Will be raised if broker rejected the order.
         """
         route_url = f"{self.get_base_url()}/trade/accounts/{self.account_id}/orders"
@@ -1536,7 +1559,12 @@ class TLAPI:
             order_id: int = int(get_nested_key(response_json, ["d", "orderId"], str))
             self.log.info(f"Order {request_body} placed with order_id: {order_id}")
             return order_id
-        except (HTTPError, TLAPIException, KeyError) as err:
+        except (HTTPError, ValueError) as err:
+            # HTTPError will be raised if a non-200 response or any request related issues
+            # occur. In that case the response_json will not be available since the excetion happens
+            # in _request. A ValueError will be raised if the response received is invalid json.
+            raise TLAPIException(f"Request failed {err} with {request_body}") from err
+        except KeyError as err:
             raise TLAPIOrderException(request_body, response_json) from err
 
     @log_func
